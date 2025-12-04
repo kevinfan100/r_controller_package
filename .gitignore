@@ -1,0 +1,22 @@
+# Simulink cache and temp files
+*.slxc
+slprj/
+*.autosave
+**/slx_extracted/
+
+# Windows reserved names
+nul
+
+# Test results data (keep folder structure)
+test_results/**/*.mat
+test_results/**/*.fig
+test_results/**/*.png
+
+# MATLAB temp files
+*.asv
+*.m~
+
+# OS files
+*.log
+Thumbs.db
+.DS_Store
