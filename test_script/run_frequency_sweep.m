@@ -52,6 +52,13 @@ fB_e = 500;
 params = r_controller_calc_params(fB_c, fB_e, fB_f);
 % ======================================================
 
+% ========== Phase 2 系統參數（Force Model / Inverse Model 用）==========
+% 這些參數目前未使用，但在 Phase 2 實現後會需要
+R_norm = 550.0;                 % μm, 正規化半徑（LUT 位址計算用）
+FGain = 8.0;                    % pN, 力量增益（g_H = g_I）
+force_scale = 10.0 / FGain;     % 力量縮放因子（Inverse Model 輸入縮放）
+% ======================================================================
+
 % Simulink 參數
 Ts = 1e-5;                % 採樣時間 [s] (100 kHz)
 solver = 'ode5';          % 固定步長 solver
@@ -117,13 +124,11 @@ if ~exist(diagnostic_dir, 'dir')
     mkdir(diagnostic_dir);
 end
 
-% 開啟模型
+% 載入模型（不開啟 GUI）
 if ~bdIsLoaded(model_name)
-    open_system(model_path);
-    fprintf('  ✓ 模型已開啟\n');
-else
-    fprintf('  ✓ 模型已載入\n');
+    load_system(model_path);
 end
+fprintf('  ✓ 模型已載入\n');
 
 % 計算 lambda 參數
 lambda_c = exp(-fB_c*T*2*pi);
@@ -292,9 +297,9 @@ for d_idx = 1:num_d
                     cb.Label.String = 'Cycle Number';
                     caxis([1, num_cycles_to_check]);
 
-                    % 保存診斷圖
+                    % 保存診斷圖（300 DPI）
                     diag_filename = sprintf('steady_fail_%.1fHz_P%d.png', Frequency, ch);
-                    saveas(fig_diag, fullfile(diagnostic_dir, diag_filename));
+                    exportgraphics(fig_diag, fullfile(diagnostic_dir, diag_filename), 'Resolution', 300);
                     close(fig_diag);
                 end
             else
@@ -877,9 +882,10 @@ png_bode_path = fullfile(output_dir, png_bode_filename);
 save(mat_path, 'results', '-v7.3');
 fprintf('  ✓ 數據已保存: %s\n', mat_filename);
 
-% 保存 Bode Plot（只有一張，d=0）
-saveas(figure(1), png_bode_path);
-fprintf('  ✓ Bode Plot 已保存: %s\n', png_bode_filename);
+% 保存 Bode Plot（300 DPI 高解析度）
+export_resolution = 300;  % DPI
+exportgraphics(figure(1), png_bode_path, 'Resolution', export_resolution);
+fprintf('  ✓ Bode Plot 已保存: %s (%d DPI)\n', png_bode_filename, export_resolution);
 
 fprintf('\n  📁 所有檔案保存至: %s\n', output_dir);
 fprintf('  📁 診斷圖保存至: %s\n', diagnostic_dir);

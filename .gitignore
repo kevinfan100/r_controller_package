@@ -1,6 +1,7 @@
 # Simulink cache and temp files
 *.slxc
 slprj/
+test_script/slprj/
 *.autosave
 **/slx_extracted/
 

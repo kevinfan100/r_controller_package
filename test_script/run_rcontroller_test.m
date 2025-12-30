@@ -55,6 +55,12 @@ beta = sqrt(lambda_e * lambda_c);
 params = r_controller_calc_params(fB_c, fB_e, fB_f);
 % ======================================================
 
+% ========== Phase 2 系統參數（Force Model / Inverse Model 用）==========
+% 這些參數目前未使用，但在 Phase 2 實現後會需要
+R_norm = 550.0;                 % μm, 正規化半徑（LUT 位址計算用）
+FGain = 8.0;                    % pN, 力量增益（g_H = g_I）
+force_scale = 10.0 / FGain;     % 力量縮放因子（Inverse Model 輸入縮放）
+% ======================================================================
 
 % ========== 顯示控制設定 ==========
 DISPLAY_MODE = 'full';  % 'full' = 顯示所有圖, 'simplified' = 只顯示兩張圖
@@ -215,11 +221,11 @@ if ~exist(model_path, 'file')
     error('找不到模型檔案: %s', model_path);
 end
 
-% 開啟模型
+% 載入模型（不開啟 GUI）
 if ~bdIsLoaded(model_name)
-    open_system(model_path);
+    load_system(model_path);
 end
-fprintf('  ✓ 模型已開啟\n');
+fprintf('  ✓ 模型已載入\n');
 
 % 設定模擬器參數
 set_param(model_name, 'StopTime', num2str(sim_time));
@@ -668,452 +674,374 @@ if strcmpi(signal_type_name, 'step')
     fprintf('\n');
 end
 
-%% SECTION 8: 繪圖
+%% SECTION 8: 繪圖（Tab 框架）
 
 if ENABLE_PLOT
     fprintf('【生成圖表】\n');
     fprintf('────────────────────────\n');
 
+    % === 建立 Tab Figure ===
+    fig_main = uifigure('Name', sprintf('R-Controller Test: %s', test_name), ...
+                        'Position', [50 50 1400 900]);
+    tabgroup = uitabgroup(fig_main);
+    tabgroup.Units = 'normalized';
+    tabgroup.Position = [0 0 1 1];
+
+    % 預分配 Tab axes（用於存圖）
+    tab_axes = struct();
+
     if strcmpi(signal_type_name, 'sine')
-        % === 圖 1: Vm_Vd ===
-        fig1 = figure('Name', 'Vm_Vd', 'Position', FIGURE_POSITIONS.Fig1);
+        % ═══════════════════════════════════════════════════════════════
+        %                       SINE 模式
+        % ═══════════════════════════════════════════════════════════════
 
-        hold on;
-        grid off;  % 取消背景網格線
+        % === Tab 1: Vm vs Vd ===
+        tab1 = uitab(tabgroup, 'Title', 'Vm vs Vd');
+        ax1 = uiaxes(tab1);
+        ax1.Position = [80 80 700 700];
+        hold(ax1, 'on');
 
-        % 繪製所有通道 (使用激發通道的 Vd)
-        % 策略：非激發通道由粗到細（第1條=激發通道粗度），最後畫激發通道
-
-        % 1. 激發通道的線寬
+        % 繪製所有通道
         excited_linewidth = measurement_linewidth * 1.5;
-
-        % 2. 非激發通道線寬範圍
-        % 最粗 = 激發通道線寬
-        % 最細 = measurement_linewidth * 0.5 (加粗)
         base_thick = excited_linewidth;
         base_thin = measurement_linewidth * 0.5;
-
-        % 3. 先畫非激發通道（由粗到細，保持通道編號順序）
-        % 儲存 plot handle 以便正確對應圖例
-        plot_handles = gobjects(6, 1);  % 預分配 handle 陣列
+        plot_handles = gobjects(6, 1);
 
         draw_count = 0;
         for ch = 1:6
             if ch ~= Channel
                 draw_count = draw_count + 1;
-                % 線寬線性遞減（共5條，索引 1~5）
                 lw = base_thick - (base_thick - base_thin) * (draw_count - 1) / 4;
-                plot_handles(ch) = plot(Vd_display(:, Channel), Vm_display(:, ch), ...
+                plot_handles(ch) = plot(ax1, Vd_display(:, Channel), Vm_display(:, ch), ...
                      'Color', colors(ch, :), 'LineWidth', lw);
             end
         end
-
-        % 4. 最後畫激發通道（最粗的線）
-        plot_handles(Channel) = plot(Vd_display(:, Channel), Vm_display(:, Channel), ...
+        plot_handles(Channel) = plot(ax1, Vd_display(:, Channel), Vm_display(:, Channel), ...
              'Color', colors(Channel, :), 'LineWidth', excited_linewidth);
 
-        xlabel('Vd (V)', 'FontSize', xlabel_fontsize+6, 'FontWeight', 'bold');  % 更大
-        ylabel('Vm (V)', 'FontSize', ylabel_fontsize+6, 'FontWeight', 'bold');  % 更大
-        % 取消標題
-        % title(sprintf('Vm vs Vd[P%d]', Channel), 'FontSize', title_fontsize, 'FontWeight', 'bold');
+        xlabel(ax1, 'Vd (V)', 'FontSize', xlabel_fontsize+6, 'FontWeight', 'bold');
+        ylabel(ax1, 'Vm (V)', 'FontSize', ylabel_fontsize+6, 'FontWeight', 'bold');
 
-        % 設定座標軸格式
-        ax = gca;
-        ax.LineWidth = 3.0;  % 座標軸線加粗（更粗）
-        ax.FontSize = tick_fontsize+6;  % 刻度字體放大（更大）
-        ax.FontWeight = 'bold';  % 刻度數字加粗
-        ax.Box = 'on';  % 保留框線
+        ax1.LineWidth = 3.0;
+        ax1.FontSize = tick_fontsize+6;
+        ax1.FontWeight = 'bold';
+        ax1.Box = 'on';
 
-        % 設定軸範圍和刻度（基於激發通道振幅）
         if vm_vd_unified_axis
-            % 統一軸：使用所有數據的最大值
             max_val = max([max(abs(Vd_display(:))), max(abs(Vm_display(:)))]);
             axis_lim = [-max_val*1.1, max_val*1.1];
-            xlim(axis_lim);
-            ylim(axis_lim);
-            axis square;
-
-            % 刻度基於激發振幅的倍數
-            % 生成以 Amplitude 為基準的刻度點
-            tick_step = Amplitude / 2;  % 每個刻度間距 = 振幅的一半
+            xlim(ax1, axis_lim);
+            ylim(ax1, axis_lim);
+            axis(ax1, 'square');
+            tick_step = Amplitude / 2;
             num_ticks = floor(max_val / tick_step);
             tick_values = (-num_ticks:num_ticks) * tick_step;
-            % 限制刻度在軸範圍內
             tick_values = tick_values(tick_values >= axis_lim(1) & tick_values <= axis_lim(2));
-            xticks(tick_values);
-            yticks(tick_values);
-        else
-            % 非統一軸：貼近激發通道極值
-            vd_excited = Vd_display(:, Channel);
-            vm_excited = Vm_display(:, Channel);
-
-            vd_range = [min(vd_excited), max(vd_excited)];
-            vm_range = [min(vm_excited), max(vm_excited)];
-            vd_margin = (vd_range(2) - vd_range(1)) * 0.1;
-            vm_margin = (vm_range(2) - vm_range(1)) * 0.1;
-
-            x_lim = [vd_range(1) - vd_margin, vd_range(2) + vd_margin];
-            y_lim = [vm_range(1) - vm_margin, vm_range(2) + vm_margin];
-            xlim(x_lim);
-            ylim(y_lim);
-
-            % 刻度基於激發振幅
-            tick_step = Amplitude / 2;
-            x_ticks = floor(x_lim(1)/tick_step):ceil(x_lim(2)/tick_step);
-            y_ticks = floor(y_lim(1)/tick_step):ceil(y_lim(2)/tick_step);
-            xticks(x_ticks * tick_step);
-            yticks(y_ticks * tick_step);
+            ax1.XTick = tick_values;
+            ax1.YTick = tick_values;
         end
 
-        % 添加圖例（使用 plot_handles 確保正確對應，位置改為右下）
-        leg = legend(plot_handles, {'P1', 'P2', 'P3', 'P4', 'P5', 'P6'}, ...
-               'Location', 'southeast', 'FontSize', legend_fontsize+2, 'FontWeight', 'bold');
-        % 設定圖例外框
-        leg.BoxFace.ColorType = 'truecoloralpha';
-        leg.BoxFace.ColorData = uint8(255*[1; 1; 1; 0.9]);  % 白底
-        leg.EdgeColor = [0 0 0];  % 黑色外框
-        leg.LineWidth = 1.0;  % 外框線寬
+        legend(ax1, plot_handles, {'P1', 'P2', 'P3', 'P4', 'P5', 'P6'}, ...
+               'Location', 'southeast', 'FontSize', legend_fontsize+2);
 
-        % 在左上角添加 FFT 頻率響應資訊
+        % FFT 資訊標註
         if exist('magnitude_ratio', 'var') && exist('phase_lag', 'var')
-            annotation_str = sprintf('Excited P%d Magnitude: %.2f%% Phase: %+.2f°', ...
+            annotation_str = sprintf('P%d Mag: %.2f%% Phase: %+.2f°', ...
                                      Channel, magnitude_ratio(Channel)*100, phase_lag(Channel));
         else
-            annotation_str = sprintf('Excited P%d Magnitude: N/A Phase: N/A', Channel);
+            annotation_str = sprintf('P%d Mag: N/A Phase: N/A', Channel);
         end
+        title(ax1, annotation_str, 'FontSize', title_fontsize, 'FontWeight', 'bold');
 
-        % 使用 text 在左上角添加標註（數據座標系統）
-        x_range = xlim;
-        y_range = ylim;
-        x_pos = x_range(1) + 0.05 * (x_range(2) - x_range(1));  % 左邊 5%
-        y_pos = y_range(2) - 0.08 * (y_range(2) - y_range(1));  % 上邊 8%
+        tab_axes.tab1 = ax1;
+        fprintf('  ✓ Tab 1: Vm vs Vd\n');
 
-        text(x_pos, y_pos, annotation_str, ...
-             'FontSize', 11, ...
-             'FontName', 'Consolas', ...
-             'FontWeight', 'bold', ...
-             'BackgroundColor', [1 1 1 0.85], ...
-             'EdgeColor', [0.3 0.3 0.3], ...
-             'LineWidth', 1.2, ...
-             'Margin', 5, ...
-             'VerticalAlignment', 'top', ...
-             'HorizontalAlignment', 'left');
-
-        fprintf('  ✓ Figure 1: Vm_Vd (with FFT analysis)\n');
-
-        % === 圖 2: 6 通道時域響應 ===
-        fig2 = figure('Name', '6 Channels Time Response', 'Position', FIGURE_POSITIONS.Fig2);
+        % === Tab 2: 6ch Time Response ===
+        tab2 = uitab(tabgroup, 'Title', '6ch Time Response');
+        tl2 = tiledlayout(tab2, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl2, sprintf('6ch Time Response - P%d, %.1f Hz (Last %d cycles)', ...
+                           Channel, Frequency, sine_display_cycles), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
         for ch = 1:6
-            subplot(2, 3, ch);
-
-            % Measurement (實線)
-            plot(t_display*1000, Vm_display(:, ch), '-', ...
+            ax = nexttile(tl2);
+            plot(ax, t_display*1000, Vm_display(:, ch), '-', ...
                  'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
-            hold on;
-
-            % Reference (虛線)
-            plot(t_display*1000, Vd_display(:, ch), '--', ...
+            hold(ax, 'on');
+            plot(ax, t_display*1000, Vd_display(:, ch), '--', ...
                  'Color', [0.5, 0.5, 0.5], 'LineWidth', reference_linewidth);
-
-            grid off;  % 去除網格線
-            xlabel('Time (ms)', 'FontSize', xlabel_fontsize+2, 'FontWeight', 'bold');  % 更大
-            ylabel('HsVm (V)', 'FontSize', ylabel_fontsize+2, 'FontWeight', 'bold');  % 更大
-            title(sprintf('P%d', ch), 'FontSize', title_fontsize+2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'Voltage (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize, 'FontWeight', 'bold');
             ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize+2;  % 更大
-            ax.FontWeight = 'bold';
-            ax.Box = 'off';  % 去除背景框線
-
-            % 添加圖例（只在第一個子圖）
+            ax.FontSize = tick_fontsize;
+            ax.Box = 'off';
             if ch == 1
-                legend({'Measurement', 'Reference'}, ...
-                       'Location', 'northeast', 'FontSize', legend_fontsize-2, 'FontWeight', 'bold');
+                legend(ax, {'Vm', 'Vd'}, 'Location', 'northeast', 'FontSize', legend_fontsize-2);
             end
         end
+        tab_axes.tab2 = tl2;
+        fprintf('  ✓ Tab 2: 6ch Time Response\n');
 
-        % 加入總標題
-        sgtitle(sprintf('6 Channels Time Response - Excited Ch: P%d, Freq: %.1f Hz (Last %d cycles)', ...
-                        Channel, Frequency, sine_display_cycles), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-        fprintf('  ✓ Figure 2: 6 Channels Time Response\n');
-
-        % === 計算最後 10 個週期的時間窗口 ===
+        % === 計算詳細分析窗口 ===
         period = 1 / Frequency;
-        detail_cycles = 10;  % 顯示最後 10 個週期
-
-        % 取最後 10 個週期（穩態）
+        detail_cycles = 10;
         t_start_detail = t(end) - detail_cycles * period;
         t_end_detail = t(end);
-
-        % 確保時間範圍有效
         t_start_detail = max(0, t_start_detail);
-        t_end_detail = min(t(end), t_end_detail);
-
-        % 選取數據
         idx_detail = (t >= t_start_detail) & (t <= t_end_detail);
         t_detail = t(idx_detail);
         u_detail = u_data(idx_detail, :);
-
-        % 顯示資訊
-        actual_cycles = (t_end_detail - t_start_detail) / period;
-        fprintf('  📊 詳細分析窗口: %.4f - %.4f s (%.1f 個週期, %d 點)\n', ...
-                t_start_detail, t_end_detail, actual_cycles, sum(idx_detail));
-
-        % === 圖 4: 控制輸入 u (Control Effort) ===
-        fig4 = figure('Name', sprintf('Control Effort (Last %d cycles)', detail_cycles), ...
-                      'Position', FIGURE_POSITIONS.Fig4);
-
-        for ch = 1:6
-            subplot(2, 3, ch);
-
-            plot(t_detail*1000, u_detail(:, ch), '-', ...
-                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
-
-            grid on;
-            xlabel('Time (ms)', 'FontSize', xlabel_fontsize-2, 'FontWeight', 'bold');
-            ylabel('Control Input u (V)', 'FontSize', ylabel_fontsize-2, 'FontWeight', 'bold');
-            title(sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
-            ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize-1;
-            ax.FontWeight = 'bold';
-        end
-
-        % 加入總標題顯示控制參數
-        sgtitle(sprintf('Control Effort - fB_f=%.0fHz, fB_c=%.0fHz, fB_e=%.0fHz', ...
-                        fB_f, fB_c, fB_e), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-        fprintf('  ✓ Figure 4: Control Input u (Last %d cycles)\n', detail_cycles);
-
-        % === 圖 5: u_w1 ===
         u_w1_detail = u_w1_data(idx_detail, :);
-
-        % 正規化時間軸（從 0 開始，單位：秒）
         t_detail_norm = t_detail - t_detail(1);
 
-        fig5 = figure('Name', sprintf('u_w1 (Last %d cycles)', detail_cycles), ...
-                      'Position', FIGURE_POSITIONS.Fig5);
+        % === Tab 3: Control Input (u) ===
+        tab3 = uitab(tabgroup, 'Title', 'Control Input (u)');
+        tl3 = tiledlayout(tab3, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl3, sprintf('Control Input u - fB: f=%d, c=%d, e=%d Hz (Last %d cycles)', ...
+                           fB_f, fB_c, fB_e, detail_cycles), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
         for ch = 1:6
-            subplot(2, 3, ch);
-
-            % 繪製 u_w1
-            plot(t_detail_norm, u_w1_detail(:, ch), '-', ...
+            ax = nexttile(tl3);
+            plot(ax, t_detail*1000, u_detail(:, ch), '-', ...
                  'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
-
-            grid on;
-            xlabel('Time (s)', 'FontSize', xlabel_fontsize-2, 'FontWeight', 'bold');
-            ylabel('(V)', 'FontSize', ylabel_fontsize-2, 'FontWeight', 'bold');
-            title(sprintf('P%d', ch), ...
-                  'FontSize', title_fontsize-2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
             ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize-1;
-            ax.FontWeight = 'bold';
-
-            % Y 軸緊貼波形範圍
-            y_data = u_w1_detail(:, ch);
-            ylim([min(y_data)*1.05, max(y_data)*1.05]);
-
-            % X 軸刻度只顯示頭、尾、中間
-            xticks(ax, [t_detail_norm(1), t_detail_norm(round(end/2)), t_detail_norm(end)]);
+            ax.FontSize = tick_fontsize;
         end
+        tab_axes.tab3 = tl3;
+        fprintf('  ✓ Tab 3: Control Input (u)\n');
 
-        % 加入總標題
-        sgtitle(sprintf('u_w1 - fB_f=%.0fHz, fB_c=%.0fHz, fB_e=%.0fHz', ...
-                        fB_f, fB_c, fB_e), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
+        % === Tab 4: u_w1 Estimation ===
+        tab4 = uitab(tabgroup, 'Title', 'u_w1 Estimation');
+        tl4 = tiledlayout(tab4, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl4, sprintf('u_w1 - fB: f=%d, c=%d, e=%d Hz', fB_f, fB_c, fB_e), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
-        fprintf('  ✓ Figure 5: u_w1 (Last %d cycles)\n', detail_cycles);
+        for ch = 1:6
+            ax = nexttile(tl4);
+            plot(ax, t_detail_norm*1000, u_w1_detail(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u_w1 (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+            y_data = u_w1_detail(:, ch);
+            if max(y_data) ~= min(y_data)
+                ylim(ax, [min(y_data)*1.05, max(y_data)*1.05]);
+            end
+        end
+        tab_axes.tab4 = tl4;
+        fprintf('  ✓ Tab 4: u_w1 Estimation\n');
+
+        % === Tab 5: Vm Full Time ===
+        tab5 = uitab(tabgroup, 'Title', 'Vm Full Time');
+        tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl5, sprintf('Vm Full Time Response - P%d, %.1f Hz', Channel, Frequency), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
+
+        for ch = 1:6
+            ax = nexttile(tl5);
+            plot(ax, t*1000, Vm_data(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth*0.8);
+            hold(ax, 'on');
+            plot(ax, t*1000, Vd_data(:, ch), '--', ...
+                 'Color', [0.5, 0.5, 0.5], 'LineWidth', reference_linewidth*0.8);
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'Voltage (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+            if ch == 1
+                legend(ax, {'Vm', 'Vd'}, 'Location', 'northeast', 'FontSize', legend_fontsize-2);
+            end
+        end
+        tab_axes.tab5 = tl5;
+        fprintf('  ✓ Tab 5: Vm Full Time\n');
+
+        % === Tab 6: Control Effort Full ===
+        tab6 = uitab(tabgroup, 'Title', 'Control Effort Full');
+        tl6 = tiledlayout(tab6, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl6, sprintf('Control Effort Full - fB: f=%d, c=%d, e=%d Hz', fB_f, fB_c, fB_e), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
+
+        for ch = 1:6
+            ax = nexttile(tl6);
+            plot(ax, t*1000, u_data(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth*0.8);
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+        end
+        tab_axes.tab6 = tl6;
+        fprintf('  ✓ Tab 6: Control Effort Full\n');
 
     else
-        % === Step 模式繪圖 ===
+        % ═══════════════════════════════════════════════════════════════
+        %                       STEP 模式
+        % ═══════════════════════════════════════════════════════════════
 
-        % 使用完整時間段的數據
-        t_step_full = t;
-        Vm_step_full = Vm_data;
-        Vd_step_full = Vd_data;
-        u_step_full = u_data;
-
-        % 選取 0~10ms 的數據用於 Vm 和 error 圖
-        zoom_time = 0.01;  % 10 ms
+        % 選取 0~10ms 的數據
+        zoom_time = 0.01;
         idx_zoom = t <= zoom_time;
         t_zoom = t(idx_zoom);
         Vm_zoom = Vm_data(idx_zoom, :);
         Vd_zoom = Vd_data(idx_zoom, :);
-        % 手動計算誤差 e = Vd - Vm
-        e_zoom = Vd_zoom - Vm_zoom;
 
-        % 圖 1: 6 通道響應 (0~10ms)
-        fig1 = figure('Name', 'Step Response - 6 Channels (0-10ms)', ...
-                      'Position', FIGURE_POSITIONS.Fig1);
-
-        for ch = 1:6
-            subplot(2, 3, ch);
-
-            % Measurement (實線)
-            plot(t_zoom*1000, Vm_zoom(:, ch), '-', 'Color', colors(ch, :), ...
-                 'LineWidth', measurement_linewidth);
-            hold on;
-
-            % Reference (虛線)
-            plot(t_zoom*1000, Vd_zoom(:, ch), '--', 'Color', [0, 0, 0], ...
-                 'LineWidth', reference_linewidth);
-
-            grid off;  % 去除網格線
-            xlabel('Time (ms)', 'FontSize', xlabel_fontsize+2, 'FontWeight', 'bold');  % 更大
-            ylabel('HsVm (V)', 'FontSize', ylabel_fontsize+2, 'FontWeight', 'bold');  % 更大
-            title(sprintf('P%d', ch), 'FontSize', title_fontsize+2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
-            ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize+2;  % 更大
-            ax.FontWeight = 'bold';
-            ax.Box = 'off';  % 去除背景框線
-
-            % 添加圖例（只在第一個子圖）
-            if ch == 1
-                legend({'Measurement', 'Reference'}, ...
-                       'Location', 'best', 'FontSize', legend_fontsize-2, 'FontWeight', 'bold');
-            end
-        end
-
-        % 加入總標題
-        sgtitle(sprintf('Step Response - Excited Ch: P%d, Amplitude: %.2f V (0-10ms)', ...
-                        Channel, Amplitude), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-        fprintf('  ✓ Figure 1: Step Response (0-10ms)\n');
-
-        % === 圖 2: 全時間範圍 Control Effort u ===
-        fig2 = figure('Name', 'Control Effort - Full Response', ...
-                      'Position', FIGURE_POSITIONS.Fig2);
-
-        for ch = 1:6
-            subplot(2, 3, ch);
-
-            plot(t*1000, u_data(:, ch), '-', 'Color', colors(ch, :), ...
-                 'LineWidth', measurement_linewidth);
-
-            grid on;
-            xlabel('Time (ms)', 'FontSize', xlabel_fontsize, 'FontWeight', 'bold');
-            ylabel('u (V)', 'FontSize', ylabel_fontsize, 'FontWeight', 'bold');
-            title(sprintf('P%d', ch), 'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
-            ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize;
-            ax.FontWeight = 'bold';
-
-            % 顯示統計資訊
-            u_max = max(u_data(:, ch));
-            u_min = min(u_data(:, ch));
-            u_ss = mean(u_data(end-min(1000, size(u_data,1)-1):end, ch));
-
-            text(0.95, 0.95, sprintf('Max: %.2f\nMin: %.2f\nSS: %.2f', u_max, u_min, u_ss), ...
-                 'Units', 'normalized', ...
-                 'HorizontalAlignment', 'right', ...
-                 'VerticalAlignment', 'top', ...
-                 'FontSize', legend_fontsize-2, ...
-                 'BackgroundColor', [1 1 1 0.8], ...
-                 'EdgeColor', [0.5 0.5 0.5]);
-        end
-
-        % 加入總標題
-        sgtitle(sprintf('Control Effort (Full) - P%d, Amp: %.2fV, fB_c=%dHz, fB_e=%dHz', ...
-                        Channel, Amplitude, fB_c, fB_e), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-        fprintf('  ✓ Figure 2: Control Effort - Full Response\n');
-
-        % === 提取穩態數據（最後 100ms）===
-        steady_time = 0.1;  % 100 ms
+        % 穩態數據（最後 100ms）
+        steady_time = 0.1;
         idx_steady = t >= (t(end) - steady_time);
         t_steady = t(idx_steady);
         u_steady = u_data(idx_steady, :);
         u_w1_steady = u_w1_data(idx_steady, :);
-
-        % 正規化時間軸（從 0 開始）
         t_steady_norm = t_steady - t_steady(1);
 
-        % === 圖 4: 控制輸入 u (Control Effort) ===
-        fig4 = figure('Name', 'Control Effort (Steady State)', ...
-                      'Position', FIGURE_POSITIONS.Fig4);
+        % === Tab 1: Step Response (0-10ms) ===
+        tab1 = uitab(tabgroup, 'Title', 'Step Response');
+        tl1 = tiledlayout(tab1, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl1, sprintf('Step Response - P%d, Amp: %.2f V (0-10ms)', Channel, Amplitude), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
         for ch = 1:6
-            subplot(2, 3, ch);
-
-            plot(t_steady_norm*1000, u_steady(:, ch), '-', ...
+            ax = nexttile(tl1);
+            plot(ax, t_zoom*1000, Vm_zoom(:, ch), '-', ...
                  'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
-
-            grid on;
-            xlabel('Time (ms)', 'FontSize', xlabel_fontsize-2, 'FontWeight', 'bold');
-            ylabel('Control Input u (V)', 'FontSize', ylabel_fontsize-2, 'FontWeight', 'bold');
-            title(sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
+            hold(ax, 'on');
+            plot(ax, t_zoom*1000, Vd_zoom(:, ch), '--', ...
+                 'Color', [0, 0, 0], 'LineWidth', reference_linewidth);
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'Voltage (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize, 'FontWeight', 'bold');
             ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize-1;
-            ax.FontWeight = 'bold';
+            ax.FontSize = tick_fontsize;
+            ax.Box = 'off';
+            if ch == 1
+                legend(ax, {'Vm', 'Vd'}, 'Location', 'best', 'FontSize', legend_fontsize-2);
+            end
         end
+        tab_axes.tab1 = tl1;
+        fprintf('  ✓ Tab 1: Step Response\n');
 
-        % 加入總標題顯示控制參數
-        sgtitle(sprintf('Control Effort - fB_f=%.0fHz, fB_c=%.0fHz, fB_e=%.0fHz', ...
-                        fB_f, fB_c, fB_e), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
-
-        fprintf('  ✓ Figure 4: Control Input u (Steady State)\n');
-
-        % === 圖 5: u_w1 ===
-        fig5 = figure('Name', 'u_w1 (Steady State)', ...
-                      'Position', FIGURE_POSITIONS.Fig5);
+        % === Tab 2: 6ch Time Response (Full) ===
+        tab2 = uitab(tabgroup, 'Title', '6ch Time Response');
+        tl2 = tiledlayout(tab2, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl2, sprintf('6ch Full Response - P%d, Amp: %.2f V', Channel, Amplitude), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
         for ch = 1:6
-            subplot(2, 3, ch);
-
-            % 繪製 u_w1
-            plot(t_steady_norm, u_w1_steady(:, ch), '-', ...
+            ax = nexttile(tl2);
+            plot(ax, t*1000, Vm_data(:, ch), '-', ...
                  'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
-
-            grid on;
-            xlabel('Time (s)', 'FontSize', xlabel_fontsize-2, 'FontWeight', 'bold');
-            ylabel('(V)', 'FontSize', ylabel_fontsize-2, 'FontWeight', 'bold');
-            title(sprintf('P%d', ch), ...
-                  'FontSize', title_fontsize-2, 'FontWeight', 'bold');
-
-            % 設定座標軸格式
-            ax = gca;
+            hold(ax, 'on');
+            plot(ax, t*1000, Vd_data(:, ch), '--', ...
+                 'Color', [0.5, 0.5, 0.5], 'LineWidth', reference_linewidth);
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'Voltage (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
             ax.LineWidth = axis_linewidth;
-            ax.FontSize = tick_fontsize-1;
-            ax.FontWeight = 'bold';
+            ax.FontSize = tick_fontsize;
+            if ch == 1
+                legend(ax, {'Vm', 'Vd'}, 'Location', 'best', 'FontSize', legend_fontsize-2);
+            end
+        end
+        tab_axes.tab2 = tl2;
+        fprintf('  ✓ Tab 2: 6ch Time Response\n');
 
-            % Y 軸緊貼波形範圍
+        % === Tab 3: Control Input (u) - Steady State ===
+        tab3 = uitab(tabgroup, 'Title', 'Control Input (u)');
+        tl3 = tiledlayout(tab3, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl3, sprintf('Control Input u - fB: f=%d, c=%d, e=%d Hz (Steady)', ...
+                           fB_f, fB_c, fB_e), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
+
+        for ch = 1:6
+            ax = nexttile(tl3);
+            plot(ax, t_steady_norm*1000, u_steady(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+        end
+        tab_axes.tab3 = tl3;
+        fprintf('  ✓ Tab 3: Control Input (u)\n');
+
+        % === Tab 4: u_w1 Estimation ===
+        tab4 = uitab(tabgroup, 'Title', 'u_w1 Estimation');
+        tl4 = tiledlayout(tab4, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl4, sprintf('u_w1 - fB: f=%d, c=%d, e=%d Hz (Steady)', fB_f, fB_c, fB_e), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
+
+        for ch = 1:6
+            ax = nexttile(tl4);
+            plot(ax, t_steady_norm*1000, u_w1_steady(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth);
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u_w1 (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
             y_data = u_w1_steady(:, ch);
-            ylim([min(y_data)*1.05, max(y_data)*1.05]);
-
-            % X 軸刻度只顯示頭、尾、中間
-            xticks(ax, [t_steady_norm(1), t_steady_norm(round(end/2)), t_steady_norm(end)]);
+            if max(y_data) ~= min(y_data)
+                ylim(ax, [min(y_data)*1.05, max(y_data)*1.05]);
+            end
         end
+        tab_axes.tab4 = tl4;
+        fprintf('  ✓ Tab 4: u_w1 Estimation\n');
 
-        % 加入總標題
-        sgtitle(sprintf('u_w1 - fB_f=%.0fHz, fB_c=%.0fHz, fB_e=%.0fHz', ...
-                        fB_f, fB_c, fB_e), ...
-                'FontSize', title_fontsize, 'FontWeight', 'bold');
+        % === Tab 5: Vm Full Time ===
+        tab5 = uitab(tabgroup, 'Title', 'Vm Full Time');
+        tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl5, sprintf('Vm Full Time Response - P%d', Channel), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
 
-        fprintf('  ✓ Figure 5: u_w1 (Steady State)\n');
+        for ch = 1:6
+            ax = nexttile(tl5);
+            plot(ax, t*1000, Vm_data(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth*0.8);
+            hold(ax, 'on');
+            plot(ax, t*1000, Vd_data(:, ch), '--', ...
+                 'Color', [0.5, 0.5, 0.5], 'LineWidth', reference_linewidth*0.8);
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'Voltage (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+        end
+        tab_axes.tab5 = tl5;
+        fprintf('  ✓ Tab 5: Vm Full Time\n');
+
+        % === Tab 6: Control Effort Full ===
+        tab6 = uitab(tabgroup, 'Title', 'Control Effort Full');
+        tl6 = tiledlayout(tab6, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl6, sprintf('Control Effort Full - fB: f=%d, c=%d, e=%d Hz', fB_f, fB_c, fB_e), ...
+              'FontSize', title_fontsize, 'FontWeight', 'bold');
+
+        for ch = 1:6
+            ax = nexttile(tl6);
+            plot(ax, t*1000, u_data(:, ch), '-', ...
+                 'Color', colors(ch, :), 'LineWidth', measurement_linewidth*0.8);
+            grid(ax, 'on');
+            xlabel(ax, 'Time (ms)', 'FontSize', xlabel_fontsize);
+            ylabel(ax, 'u (V)', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            ax.LineWidth = axis_linewidth;
+            ax.FontSize = tick_fontsize;
+        end
+        tab_axes.tab6 = tl6;
+        fprintf('  ✓ Tab 6: Control Effort Full\n');
     end
 
     fprintf('\n');
@@ -1125,20 +1053,38 @@ if SAVE_PNG || SAVE_MAT
     fprintf('【保存結果】\n');
     fprintf('────────────────────────\n');
 
-    % 保存圖片
+    % 保存圖片（300 DPI 高解析度）
     if SAVE_PNG && ENABLE_PLOT
+        export_resolution = 300;  % DPI
+
         if strcmpi(signal_type_name, 'sine')
-            saveas(fig1, fullfile(test_dir, 'Vm_Vd.png'));
-            saveas(fig2, fullfile(test_dir, '6ch_time_response.png'));
-            saveas(fig4, fullfile(test_dir, 'control_input_u.png'));
-            saveas(fig5, fullfile(test_dir, 'u_w1_estimated.png'));
+            % Tab 1: Vm vs Vd
+            exportgraphics(tab1, fullfile(test_dir, 'tab1_Vm_Vd.png'), 'Resolution', export_resolution);
+            % Tab 2: 6ch Time Response
+            exportgraphics(tab2, fullfile(test_dir, 'tab2_6ch_time_response.png'), 'Resolution', export_resolution);
+            % Tab 3: Control Input (u)
+            exportgraphics(tab3, fullfile(test_dir, 'tab3_control_input_u.png'), 'Resolution', export_resolution);
+            % Tab 4: u_w1 Estimation
+            exportgraphics(tab4, fullfile(test_dir, 'tab4_u_w1_estimation.png'), 'Resolution', export_resolution);
+            % Tab 5: Vm Full Time
+            exportgraphics(tab5, fullfile(test_dir, 'tab5_Vm_full_time.png'), 'Resolution', export_resolution);
+            % Tab 6: Control Effort Full
+            exportgraphics(tab6, fullfile(test_dir, 'tab6_control_effort_full.png'), 'Resolution', export_resolution);
         else
-            saveas(fig1, fullfile(test_dir, 'step_response_6ch.png'));
-            saveas(fig2, fullfile(test_dir, 'control_effort_full.png'));
-            saveas(fig4, fullfile(test_dir, 'control_input_u_steady.png'));
-            saveas(fig5, fullfile(test_dir, 'u_w1.png'));
+            % Tab 1: Step Response
+            exportgraphics(tab1, fullfile(test_dir, 'tab1_step_response.png'), 'Resolution', export_resolution);
+            % Tab 2: 6ch Time Response
+            exportgraphics(tab2, fullfile(test_dir, 'tab2_6ch_time_response.png'), 'Resolution', export_resolution);
+            % Tab 3: Control Input (u)
+            exportgraphics(tab3, fullfile(test_dir, 'tab3_control_input_u.png'), 'Resolution', export_resolution);
+            % Tab 4: u_w1 Estimation
+            exportgraphics(tab4, fullfile(test_dir, 'tab4_u_w1_estimation.png'), 'Resolution', export_resolution);
+            % Tab 5: Vm Full Time
+            exportgraphics(tab5, fullfile(test_dir, 'tab5_Vm_full_time.png'), 'Resolution', export_resolution);
+            % Tab 6: Control Effort Full
+            exportgraphics(tab6, fullfile(test_dir, 'tab6_control_effort_full.png'), 'Resolution', export_resolution);
         end
-        fprintf('  ✓ Figures saved (.png)\n');
+        fprintf('  ✓ Figures saved (.png, %d DPI)\n', export_resolution);
     end
 
     % 保存 MAT 數據

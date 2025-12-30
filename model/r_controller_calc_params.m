@@ -90,11 +90,6 @@ function params = r_controller_calc_params(fB_c, fB_e, fB_f)
     params.one_A_beta = 1 + beta;        % 1 + beta
     params.neg_beta = -beta;             % -beta
 
-    % >>> Start adding new variables from here <<<
-    % new_variables_1 (elems(21)
-    % new_variables_2 (elems(22)
-
-
     % ========================================
     % CONTROL LAW COEFFICIENTS
     % (reuse existing parameters)
@@ -189,16 +184,6 @@ function params = r_controller_calc_params(fB_c, fB_e, fB_f)
     elems(20) = Simulink.BusElement;
     elems(20).Name = 'neg_beta';
     elems(20).DataType = 'double';
-
-    % >>> Start adding new variables from elems(21) <<<
-    % elems(21) = Simulink.BusElement;
-    % elems(21).Name = 'new variables';
-    % elems(21).DataType = 'double';
-    % 
-    % elems(21) = Simulink.BusElement;
-    % elems(21).Name = 'new variables';
-    % elems(21).Dimensions = [6 6];     size
-    % elems(21).DataType = 'double';
 
     % Assign elements to bus
     ParamsBus.Elements = elems;
