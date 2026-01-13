@@ -24,3 +24,6 @@ Thumbs.db
 
 # Claude Code local settings (personal, not shared)
 .claude/settings.local.json
+
+# Claude Code temporary files
+tmpclaude-*-cwd

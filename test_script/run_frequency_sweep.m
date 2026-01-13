@@ -2,7 +2,7 @@
 % R Controller 頻率響應測試腳本 - Bode Plot 分析
 %
 % 功能：
-%   1. 掃過多個頻率點（1 Hz ~ 4 kHz, 21 點）
+%   1. 掃過多個頻率點（10 Hz ~ 2 kHz, 13 點）
 %   2. 測試 d=0 的頻率響應
 %   3. 使用 FFT 分析計算增益和相位
 %   4. 品質檢測（穩態、THD、DC）
@@ -25,10 +25,10 @@ package_root = fullfile(script_dir, '..');
 addpath(fullfile(package_root, 'model'));
 
 % 所有頻率都能產生整數的 samples_per_cycle，避免相位漂移問題
-frequencies = [1, 10, 50, 100, ...               
-               125, 200, 250, 400, 500, ...       
-               625, 800, 1000, 1250, 2000, ...    
-               2500, 3125, 4000];                 
+% 移除 1 Hz（max_sim_time=5s 時週期數不足）
+frequencies = [10, 50, 100, ...
+               125, 200, 250, 400, 500, ...
+               625, 800, 1000, 1250, 2000];                 
 
 d_values = [0];
 
@@ -43,7 +43,7 @@ SignalType = 1;           % Sine mode
 T = 1e-5;                 % 採樣時間 [s] (100 kHz)
 
 fB_f = 1000;              
-fB_c = 500;              
+fB_c = 300;              
 fB_e = 500;             
 
 % ==================== 計算控制器參數 ====================
@@ -69,7 +69,7 @@ total_cycles = 100;       % 總週期數
 skip_cycles = 60;         % 跳過暫態週期數
 fft_cycles = 40;          % FFT 分析週期數
 min_sim_time = 0.1;       % 最小模擬時間 [s]（高頻用）
-max_sim_time = Inf;       % 最大模擬時間 [s]（不設限）
+max_sim_time = 5.0;       % 最大模擬時間 [s]（限制低頻模擬時間）
 
 % 品質檢測參數
 steady_state_threshold = 0.02;  % 穩態檢測閾值 (2% of Amplitude)
@@ -179,6 +179,16 @@ for d_idx = 1:num_d
         fprintf('        當前 d 值: %d\n', d);
         fprintf('────────────────────────────────────────────────────────\n');
 
+        % 傳遞變數到 base workspace (Simulink Constant blocks 從此讀取)
+        assignin('base', 'SignalType', SignalType);
+        assignin('base', 'Channel', Channel);
+        assignin('base', 'Amplitude', Amplitude);
+        assignin('base', 'Frequency', Frequency);
+        assignin('base', 'Phase', Phase);
+        assignin('base', 'StepTime', StepTime);
+        assignin('base', 'd', d);  % Preview samples (d=0 或 d=2)
+        assignin('base', 'params', params);
+
         % 設定 Simulink 模擬參數
         set_param(model_name, 'StopTime', num2str(sim_time));
         set_param(model_name, 'Solver', solver);
@@ -210,9 +220,23 @@ for d_idx = 1:num_d
             continue;
         end
 
-        % 選取穩態數據（跳過前 skip_cycles 個週期）
-        skip_time = skip_cycles * period;
-        fft_time = fft_cycles * period;
+        % 動態調整週期數（當 max_sim_time 限制模擬時間時）
+        actual_total_cycles = t(end) / period;
+        if actual_total_cycles < total_cycles
+            % 依比例調整 skip 和 fft 週期
+            adj_skip_cycles = floor(actual_total_cycles * 0.6);
+            adj_fft_cycles = floor(actual_total_cycles * 0.35);
+            adj_fft_cycles = max(adj_fft_cycles, 2);  % 至少 2 個週期
+            fprintf('  ⚠️ 週期數調整: skip=%d, fft=%d (原: %d, %d)\n', ...
+                    adj_skip_cycles, adj_fft_cycles, skip_cycles, fft_cycles);
+        else
+            adj_skip_cycles = skip_cycles;
+            adj_fft_cycles = fft_cycles;
+        end
+
+        % 選取穩態數據（跳過前 adj_skip_cycles 個週期）
+        skip_time = adj_skip_cycles * period;
+        fft_time = adj_fft_cycles * period;
 
         t_start = skip_time;
         t_end = min(skip_time + fft_time, t(end));
