@@ -1,4 +1,4 @@
-% run_force_control_test.m
+% run_force_generation_test.m
 % Phase 2 Integration Test: Force Control with Inverse Model
 %
 % This script demonstrates the complete force control pipeline:
@@ -114,7 +114,7 @@ USE_SIMULINK = true;            % true: use Simulink R-Controller
 ENABLE_PLOT = true;
 SAVE_PNG = true;
 SAVE_MAT = true;
-output_dir = fullfile(package_root, 'test_results', 'force_ctrl', 'force_control');
+output_dir = fullfile(package_root, 'test_results', 'force_generation', 'force_control');
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.10 Plot Style (consistent with run_rcontroller_test.m)

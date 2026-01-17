@@ -37,6 +37,9 @@ function config = test_config(varargin)
 %   config = test_config('Type', 'inner_loop');
 %   params = model_base_ctrl_calc_params(config.fB_c, config.fB_e, config.fB_f);
 %
+% Reference implementation of project standards.
+% See also: CLAUDE.md - "Test Pass/Fail Criteria" section
+%
 % Author: R-Controller Package Team
 % Date: 2025-01-17
 

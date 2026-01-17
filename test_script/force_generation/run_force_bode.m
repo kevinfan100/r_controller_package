@@ -1,4 +1,4 @@
-% run_force_bode_test.m
+% run_force_bode.m
 % Force Control Frequency Response Test - Bode Plot Analysis
 %
 % This script measures the frequency response of the force control pipeline:
@@ -134,7 +134,7 @@ dc_tolerance = 0.01;            % DC tolerance (1% of amplitude)
 % -------------------------------------------------------------------------
 SAVE_PNG = true;
 SAVE_MAT = true;
-output_dir = fullfile(package_root, 'test_results', 'force_ctrl', 'force_bode');
+output_dir = fullfile(package_root, 'test_results', 'force_generation', 'force_bode');
 
 % -------------------------------------------------------------------------
 % 1.12 Plot Style

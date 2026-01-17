@@ -23,7 +23,7 @@ r_controller_package/
 │   ├── inner_loop/                   # Inner loop controller tests
 │   │   ├── run_inner_loop_test.m     # Single-frequency test (sine/step)
 │   │   └── run_inner_loop_bode.m     # Frequency sweep (Bode plot)
-│   ├── force_ctrl/                   # Force control pipeline tests
+│   ├── force_generation/                   # Force control pipeline tests
 │   │   ├── run_force_control_test.m  # Force control integration test
 │   │   └── run_force_bode_test.m     # Force control frequency sweep
 │   └── utils/                        # Shared test utilities
@@ -52,8 +52,8 @@ run('test_script/inner_loop/run_inner_loop_test.m')
 run('test_script/inner_loop/run_inner_loop_bode.m')
 
 % Run force control tests
-run('test_script/force_ctrl/run_force_control_test.m')
-run('test_script/force_ctrl/run_force_bode_test.m')
+run('test_script/force_generation/run_force_control_test.m')
+run('test_script/force_generation/run_force_bode_test.m')
 ```
 
 ## Architecture
@@ -144,7 +144,7 @@ test_results/
 │   ├── sine_wave/           # run_inner_loop_test.m (sine mode)
 │   ├── step_response/       # run_inner_loop_test.m (step mode)
 │   └── frequency_response/  # run_inner_loop_bode.m
-└── force_ctrl/
+└── force_generation/
     ├── force_control/       # run_force_control_test.m
     └── force_bode/          # run_force_bode_test.m
 ```
@@ -174,3 +174,179 @@ end
 config = test_config('Type', 'inner_loop');
 params = model_base_ctrl_calc_params(config.fB_c, config.fB_e, config.fB_f);
 ```
+
+---
+
+## Plot Style Standards
+
+統一的圖形樣式規範，確保所有測試輸出視覺一致性。
+
+### Channel Colors (P1-P6)
+
+| Channel | RGB Value | 說明 |
+|---------|-----------|------|
+| P1 | [0.0, 0.0, 0.5] | Dark Blue |
+| P2 | [0.0, 0.0, 1.0] | Blue |
+| P3 | [0.0, 0.5, 0.0] | Green |
+| P4 | [1.0, 0.0, 0.0] | Red |
+| P5 | [0.8, 0.0, 0.8] | Purple |
+| P6 | [0.0, 0.75, 0.75] | Cyan |
+
+### Force Axis Colors (X/Y/Z)
+
+| Axis | RGB Value | 說明 |
+|------|-----------|------|
+| Fx | [0, 0, 1] | Blue |
+| Fy | [0, 0.5, 0] | Green |
+| Fz | [1, 0, 0] | Red |
+
+### Line Width Standards
+
+| 用途 | 線寬 | 說明 |
+|------|------|------|
+| 量測數據 | 3.0 | measurement_linewidth |
+| 參考信號 | 2.5 | reference_linewidth |
+| 理論曲線 | 3.5 | theory_linewidth |
+| 座標軸 | 1.5 | axis_linewidth |
+| Bode 圖 | 3.5 | bode_linewidth |
+
+### Font Size Standards
+
+| 元素 | 一般圖 | Bode 圖 |
+|------|--------|---------|
+| 標題 | 15 | 22 |
+| 軸標籤 | 14 | 22 |
+| 刻度 | 12 | 18 |
+| 圖例 | 11 | 13 |
+
+### Marker Standards
+
+- Channel markers: `'o', 's', '^', 'd', 'v', 'p'` (依序對應 P1-P6)
+- Force markers: `'o', 's', '^'` (依序對應 X/Y/Z)
+- Marker size: 8 (一般), 9 (Bode)
+
+### 圖檔輸出格式
+
+- 格式: PNG
+- 解析度: 300 DPI
+- 命名: `{test_type}_{timestamp}.png`
+
+---
+
+## Frequency Response Validation
+
+FFT 頻率響應分析方法論與驗證標準。
+
+### FFT 分析方法論
+
+1. **信號準備**
+   - 跳過暫態週期（預設 60 週期）
+   - 使用穩態週期進行分析（預設 40 週期）
+
+2. **頻率分辨率**
+   - 頻率 bin 誤差 < 0.1% 為合格
+   - 若誤差過大，應調整模擬週期數
+
+3. **相位計算**
+   - 相位差歸一化至 [-180°, +180°]
+   - 正值表示 lead，負值表示 lag
+
+### 頻寬判定標準
+
+| 指標 | 標準 |
+|------|------|
+| -3dB 頻寬 | 量測值與設計值誤差 < 10% |
+| 相位 @-3dB | 應在 -30° ~ -60° 之間 |
+| DC 增益 | 0 dB ± 0.5 dB |
+
+### Inner Loop 頻率掃描點
+
+建議使用以下頻率（確保整數週期）:
+
+```
+10, 50, 100, 125, 200, 250, 400, 500, 625, 800, 1000, 1250, 2000 Hz
+```
+
+### Force Control 頻率掃描點
+
+受限於 1600 Hz 位置更新率，建議:
+
+```
+1, 10, 20, 50, 100, 125, 200, 250 Hz
+```
+
+---
+
+## Signal Quality Check Standards
+
+信號品質檢測規範，確保分析數據可靠性。
+
+### 穩態判定（Steady-State Detection）
+
+- 方法：連續週期差異比較
+- 門檻：週期間最大差異 < 2% 振幅
+- 比較週期數：最多 10 個週期
+
+### THD 規範（Total Harmonic Distortion）
+
+- 門檻：THD < 1%
+- 諧波數：計算至第 10 次諧波
+- 失敗處理：標記警告但不中斷測試
+
+### DC 偏移規範
+
+- 門檻：DC 成分 < 1% 振幅
+- 計算：FFT 第 0 bin
+
+### 綜合判定
+
+- 所有檢測通過 → 數據可用
+- 任一檢測失敗 → 輸出警告，標記需人工檢視
+
+---
+
+## Test Pass/Fail Criteria
+
+測試結果判定標準。
+
+### Inner Loop Test (run_inner_loop_test.m)
+
+**Sine 模式：**
+
+| 指標 | Pass 條件 |
+|------|----------|
+| 追蹤精度 | 振幅誤差 < 5% |
+| 相位誤差 | < 10° @ 測試頻率 |
+| 穩態收斂 | 60 週期內達穩態 |
+
+**Step 模式：**
+
+| 指標 | Pass 條件 |
+|------|----------|
+| 上升時間 | < 理論值 × 1.2 |
+| 安定時間 | < 理論值 × 1.5 |
+| 超越量 | < 10% |
+
+### Inner Loop Bode (run_inner_loop_bode.m)
+
+| 指標 | Pass 條件 |
+|------|----------|
+| 頻寬 | 實測/設計比 = 0.9 ~ 1.1 |
+| 低頻增益 | 0 dB ± 0.5 dB |
+| 相位交越 | 無正反饋跡象 |
+
+### Force Control Test (run_force_control_test.m)
+
+| 指標 | Pass 條件 |
+|------|----------|
+| 力量追蹤誤差 | RMS < 10% |
+| 電壓追蹤誤差 | RMS < 5% |
+| 串擾 | < -20 dB |
+
+### Force Bode Test (run_force_bode_test.m)
+
+| 指標 | Pass 條件 |
+|------|----------|
+| 頻寬 | > 100 Hz (受 1600 Hz 限制) |
+| 主軸增益 | 0 dB ± 1 dB @ DC |
+| 跨軸串擾 | < -15 dB |

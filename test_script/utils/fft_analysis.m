@@ -26,6 +26,9 @@ function results = fft_analysis(ref_signal, meas_signal, fs, target_freq)
 %   fprintf('Magnitude ratio: %.2f%%, Phase: %.2f deg\n', ...
 %           results.magnitude_ratio*100, results.phase_lag_deg);
 %
+% Reference implementation of project standards.
+% See also: CLAUDE.md - "Frequency Response Validation" section
+%
 % Author: R-Controller Package Team
 % Date: 2025-01-17
 
