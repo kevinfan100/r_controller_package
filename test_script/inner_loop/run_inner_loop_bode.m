@@ -1,4 +1,4 @@
-% run_frequency_sweep.m
+% run_inner_loop_bode.m
 % R Controller 頻率響應測試腳本 - Bode Plot 分析
 %
 % 功能：
@@ -17,12 +17,14 @@ fprintf('           R Controller 頻率響應測試 (Bode Plot)\n');
 fprintf('════════════════════════════════════════════════════════════\n');
 fprintf('\n');
 
-%% SECTION 1: 測試配置 
+%% SECTION 1: 測試配置
 
 % 添加必要的路徑
 script_dir = fileparts(mfilename('fullpath'));
-package_root = fullfile(script_dir, '..');
+package_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(package_root, 'model'));
+addpath(fullfile(package_root, 'model', 'inner_loop_ctrl'));
+addpath(fullfile(package_root, 'model', 'flux_allocation'));
 
 % 所有頻率都能產生整數的 samples_per_cycle，避免相位漂移問題
 % 移除 1 Hz（max_sim_time=5s 時週期數不足）
@@ -47,10 +49,16 @@ fB_c = 300;
 fB_e = 500;             
 
 % ==================== 計算控制器參數 ====================
-% 使用 r_controller_calc_params 計算所有控制器係數
+% 使用 model_base_ctrl_calc_params 計算所有控制器係數
 % 此函數會自動創建 Bus Object 並包裝為 Simulink.Parameter
-params = r_controller_calc_params(fB_c, fB_e, fB_f);
+params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
 % ======================================================
+
+% ==================== PI 控制器參數（備用）====================
+Kp_value = 2;                   % 比例增益
+zc = 2206;                      % 零點位置 [rad/s]
+Ki_value = Kp_value * zc;       % 積分增益 (Ki = Kp * zc)
+% ==============================================================
 
 % ========== Phase 2 系統參數（Force Model / Inverse Model 用）==========
 % 這些參數目前未使用，但在 Phase 2 實現後會需要
@@ -80,10 +88,10 @@ freq_error_threshold = 0.1;     % 頻率誤差警告閾值 (0.1%)
 % 輸出設定
 test_timestamp = datestr(now, 'yyyymmdd_HHMMSS');
 test_folder_name = sprintf('d%d_ch%d_%s', d_values(1), Channel, test_timestamp);
-output_dir = fullfile(package_root, 'test_results', 'frequency_response', test_folder_name);
+output_dir = fullfile(package_root, 'test_results', 'inner_loop', 'frequency_response', test_folder_name);
 
 % 模型設定
-model_name = 'r_controller_system_integrated';
+model_name = 'main_system';
 model_path = fullfile(package_root, 'model', [model_name '.slx']);
 
 %% SECTION 2: 初始化
@@ -188,6 +196,16 @@ for d_idx = 1:num_d
         assignin('base', 'StepTime', StepTime);
         assignin('base', 'd', d);  % Preview samples (d=0 或 d=2)
         assignin('base', 'params', params);
+        assignin('base', 'Kp_value', Kp_value);
+        assignin('base', 'Ki_value', Ki_value);
+
+        % 控制器類型 (1=R-Controller, 2=PI-Controller)
+        ControllerType = 1;
+        assignin('base', 'ControllerType', ControllerType);
+
+        % 外部 vd 時間序列（內迴路測試不使用，但 Simulink 模型需要此變數）
+        vd_timeseries = timeseries(zeros(2, 6), [0; sim_time]);
+        assignin('base', 'vd_timeseries', vd_timeseries);
 
         % 設定 Simulink 模擬參數
         set_param(model_name, 'StopTime', num2str(sim_time));

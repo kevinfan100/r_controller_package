@@ -53,7 +53,7 @@ function params = system_params()
     % ========================================
     % LUT PATH
     % ========================================
-    params.lut_path = fullfile(fileparts(mfilename('fullpath')), '..', 'data', 'lut');
+    params.lut_path = fullfile(fileparts(mfilename('fullpath')), '..', '..', 'data', 'lut');
 
     % ========================================
     % PRE-COMPUTED MATRICES

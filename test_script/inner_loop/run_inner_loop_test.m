@@ -1,11 +1,13 @@
-% run_rcontroller_test.m
+% run_inner_loop_test.m
 
 clear; clc; close all;
 
 % 添加必要的路徑
 script_dir_temp = fileparts(mfilename('fullpath'));
-package_root_temp = fullfile(script_dir_temp, '..');
+package_root_temp = fullfile(script_dir_temp, '..', '..');
 addpath(fullfile(package_root_temp, 'model'));
+addpath(fullfile(package_root_temp, 'model', 'inner_loop_ctrl'));
+addpath(fullfile(package_root_temp, 'model', 'flux_allocation'));
 
 %% SECTION 1: 配置區域
 
@@ -17,7 +19,7 @@ signal_type_name = 'sine';      % 'step' 或 'sine'
 % preview
 d = 0;  
 Channel = 1;                    % 激發通道 (1-6)
-Amplitude = 0.5;               % 振幅 [V]
+Amplitude = 2;               % 振幅 [V]
 Frequency = 100;                % Sine 頻率 [Hz]
 Phase = 0;                      % Sine 相位 [deg]
 StepTime = 0;                 % Step 跳變時間 [s]
@@ -42,8 +44,8 @@ freq_error_threshold = 0.1;     % 頻率誤差警告閾值 (0.1%)
 % lambda corresponding bandwidth [Hz]
 T = 1e-5;
 
-fB_f = 3000;
-fB_c = 500;
+fB_f = 1000;
+fB_c = 300;
 fB_e = 500;
 
 lambda_f = exp(-fB_f*T*2*pi);
@@ -52,8 +54,14 @@ lambda_e = exp(-fB_e*T*2*pi);
 beta = sqrt(lambda_e * lambda_c);
 
 % ==================== 計算控制器參數 ====================
-params = r_controller_calc_params(fB_c, fB_e, fB_f);
+params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
 % ======================================================
+
+% ==================== PI 控制器參數（備用）====================
+Kp_value = 2;                   % 比例增益
+zc = 2206;                      % 零點位置 [rad/s]
+Ki_value = Kp_value * zc;       % 積分增益 (Ki = Kp * zc)
+% ==============================================================
 
 % ========== Phase 2 系統參數（Force Model / Inverse Model 用）==========
 % 這些參數目前未使用，但在 Phase 2 實現後會需要
@@ -84,10 +92,10 @@ FIGURE_POSITIONS.Fig7 = [900, 100, 800, 500];          % 圖 7 位置 (激發通
 Ts = 1e-5;                      % 採樣時間 [s] (100 kHz)
 solver = 'ode45';             % Simulink solver  ode23tb
 
-model_name = 'r_controller_system_integrated';
+model_name = 'main_system';
 
 script_dir = fileparts(mfilename('fullpath'));
-package_root = fullfile(script_dir, '..');
+package_root = fullfile(script_dir, '..', '..');
 model_path = fullfile(package_root, 'model', [model_name '.slx']);
 
 colors = [
@@ -120,9 +128,9 @@ SAVE_MAT = true;
 
 % 根據測試類型選擇輸出資料夾
 if strcmpi(signal_type_name, 'sine')
-    output_dir = fullfile('test_results', 'sine_wave');
+    output_dir = fullfile('test_results', 'inner_loop', 'sine_wave');
 else
-    output_dir = fullfile('test_results', 'step_response');
+    output_dir = fullfile('test_results', 'inner_loop', 'step_response');
 end
 
 %% SECTION 2: 初始化與驗證
@@ -239,6 +247,17 @@ fprintf('    - MaxStep: %.2e s\n', Ts/10);
 % 將 params 變數設定到模型工作區或基礎工作區
 % 確保 Simulink 模型可以存取 params 變數
 assignin('base', 'params', params);
+assignin('base', 'Kp_value', Kp_value);
+assignin('base', 'Ki_value', Ki_value);
+
+% 控制器類型 (1=R-Controller, 2=PI-Controller)
+ControllerType = 1;
+assignin('base', 'ControllerType', ControllerType);
+
+% 外部 vd 時間序列（內迴路測試不使用，但 Simulink 模型需要此變數）
+vd_timeseries = timeseries(zeros(2, 6), [0; sim_time]);
+assignin('base', 'vd_timeseries', vd_timeseries);
+
 fprintf('  ✓ 參數已載入至工作區\n');
 
 fprintf('\n');

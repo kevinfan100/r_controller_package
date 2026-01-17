@@ -1,8 +1,8 @@
-function [u, u_w1] = r_controller_function_general(vd, vm, params)
+function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     % R Controller with Pre-calculated Parameters
     %
     % Implements R Controller using pre-calculated parameters from
-    % r_controller_calc_params(). This function contains ONLY the
+    % model_base_ctrl_calc_params(). This function contains ONLY the
     % difference equations for real-time execution.
     %
     %

@@ -1,4 +1,4 @@
-function params = r_controller_calc_params(fB_c, fB_e, fB_f)
+function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     % R Controller Parameter Calculator (with Bus Object creation)
     %
     % Calculate all controller coefficients from bandwidth parameters
