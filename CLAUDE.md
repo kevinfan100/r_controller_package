@@ -23,9 +23,9 @@ r_controller_package/
 │   ├── inner_loop/                   # Inner loop controller tests
 │   │   ├── run_inner_loop_test.m     # Single-frequency test (sine/step)
 │   │   └── run_inner_loop_bode.m     # Frequency sweep (Bode plot)
-│   ├── force_generation/                   # Force control pipeline tests
-│   │   ├── run_force_control_test.m  # Force control integration test
-│   │   └── run_force_bode_test.m     # Force control frequency sweep
+│   ├── force_generation/                   # Force generation pipeline tests
+│   │   ├── run_force_generation_test.m    # Force generation integration test
+│   │   └── run_force_bode.m               # Force generation frequency sweep
 │   └── utils/                        # Shared test utilities
 │       ├── plot_styles.m             # Unified plot style settings
 │       ├── fft_analysis.m            # FFT frequency response analysis
@@ -51,9 +51,9 @@ ctrl_params = model_base_ctrl_calc_params(500, 500, 3000);
 run('test_script/inner_loop/run_inner_loop_test.m')
 run('test_script/inner_loop/run_inner_loop_bode.m')
 
-% Run force control tests
-run('test_script/force_generation/run_force_control_test.m')
-run('test_script/force_generation/run_force_bode_test.m')
+% Run force generation tests
+run('test_script/force_generation/run_force_generation_test.m')
+run('test_script/force_generation/run_force_bode.m')
 ```
 
 ## Architecture
@@ -145,8 +145,8 @@ test_results/
 │   ├── step_response/       # run_inner_loop_test.m (step mode)
 │   └── frequency_response/  # run_inner_loop_bode.m
 └── force_generation/
-    ├── force_control/       # run_force_control_test.m
-    └── force_bode/          # run_force_bode_test.m
+    ├── force_control/       # run_force_generation_test.m
+    └── force_bode/          # run_force_bode.m
 ```
 
 Each test saves `.mat` data files and `.png` figures (300 DPI). All test results are gitignored.
@@ -335,7 +335,7 @@ FFT 頻率響應分析方法論與驗證標準。
 | 低頻增益 | 0 dB ± 0.5 dB |
 | 相位交越 | 無正反饋跡象 |
 
-### Force Control Test (run_force_control_test.m)
+### Force Generation Test (run_force_generation_test.m)
 
 | 指標 | Pass 條件 |
 |------|----------|
@@ -343,7 +343,7 @@ FFT 頻率響應分析方法論與驗證標準。
 | 電壓追蹤誤差 | RMS < 5% |
 | 串擾 | < -20 dB |
 
-### Force Bode Test (run_force_bode_test.m)
+### Force Bode Test (run_force_bode.m)
 
 | 指標 | Pass 條件 |
 |------|----------|
