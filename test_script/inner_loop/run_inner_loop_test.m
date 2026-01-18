@@ -53,9 +53,8 @@ lambda_c = exp(-fB_c*T*2*pi);
 lambda_e = exp(-fB_e*T*2*pi);
 beta = sqrt(lambda_e * lambda_c);
 
-% ==================== 計算控制器參數 ====================
-params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
-% ======================================================
+% 計算控制器參數
+ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
 
 % ==================== PI 控制器參數（備用）====================
 Kp_value = 2;                   % 比例增益
@@ -246,7 +245,7 @@ fprintf('    - MaxStep: %.2e s\n', Ts/10);
 
 % 將 params 變數設定到模型工作區或基礎工作區
 % 確保 Simulink 模型可以存取 params 變數
-assignin('base', 'params', params);
+assignin('base', 'params', ctrl_params);
 assignin('base', 'Kp_value', Kp_value);
 assignin('base', 'Ki_value', Ki_value);
 

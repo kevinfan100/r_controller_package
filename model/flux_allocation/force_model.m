@@ -1,4 +1,4 @@
-function f_m = force_model(v_m, pos_m, params)
+function f_m = force_model(v_m, pos_m, alloc_params)
 % FORCE_MODEL Hall sensor voltage -> Estimated force
 %
 % Formula: F = g_H * Phi_hat' * L * Phi_hat
@@ -6,40 +6,32 @@ function f_m = force_model(v_m, pos_m, params)
 %   L = position-dependent gradient matrices
 %
 % Inputs:
-%   v_m    - Hall sensor voltage (6x1) [V]
-%   pos_m  - Bead position (3x1), Measuring coordinate [um]
-%   params - System parameters from system_params()
+%   v_m          - Hall sensor voltage (6x1) [V]
+%   pos_m        - Bead position (3x1), Measuring coordinate [um]
+%   alloc_params - System parameters from force_model_allocation_params()
 %
 % Output:
 %   f_m    - Estimated force (3x1), Measuring coordinate [pN]
+%
+% See also: force_model_allocation_params, inverse_model, CLAUDE.md
 
-    % ========================================
-    % STEP 1: V_m -> Phi_hat
-    % ========================================
-    Phi = params.D_H_hat * v_m;
+    %% Step 1: V_m -> Phi_hat
+    Phi = alloc_params.D_H_hat * v_m;
 
-    % ========================================
-    % STEP 2: POSITION TRANSFORM
-    % ========================================
-    pos_a = params.T_m2a * pos_m;
+    %% Step 2: Position Transform
+    pos_a = alloc_params.T_m2a * pos_m;
 
-    % ========================================
-    % STEP 3: L MATRICES
-    % ========================================
-    [Lx, Ly, Lz] = calc_L_matrices(pos_a, params.R_norm);
+    %% Step 3: L Matrices
+    [Lx, Ly, Lz] = calc_L_matrices(pos_a, alloc_params.R_norm);
 
-    % ========================================
-    % STEP 4: QUADRATIC FORM
-    % ========================================
+    %% Step 4: Quadratic Form
     % F = g_H * Phi' * L * Phi
-    Fx_a = params.g_H * (Phi' * Lx * Phi);
-    Fy_a = params.g_H * (Phi' * Ly * Phi);
-    Fz_a = params.g_H * (Phi' * Lz * Phi);
+    Fx_a = alloc_params.g_H * (Phi' * Lx * Phi);
+    Fy_a = alloc_params.g_H * (Phi' * Ly * Phi);
+    Fz_a = alloc_params.g_H * (Phi' * Lz * Phi);
 
-    % ========================================
-    % STEP 5: ACTUATOR -> MEASURING
-    % ========================================
-    f_m = params.T_a2m * [Fx_a; Fy_a; Fz_a];
+    %% Step 5: Actuator -> Measuring
+    f_m = alloc_params.T_a2m * [Fx_a; Fy_a; Fz_a];
 
 end
 

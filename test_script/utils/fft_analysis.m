@@ -28,9 +28,6 @@ function results = fft_analysis(ref_signal, meas_signal, fs, target_freq)
 %
 % Reference implementation of project standards.
 % See also: CLAUDE.md - "Frequency Response Validation" section
-%
-% Author: R-Controller Package Team
-% Date: 2025-01-17
 
     % Ensure column vectors
     if size(ref_signal, 1) < size(ref_signal, 2)

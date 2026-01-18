@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language Preference / 語言偏好
+
+- **主要語言**：繁體中文
+- **輔助語言**：英文（用於程式碼、變數名稱、技術術語）
+- 回覆使用者問題時，請以繁體中文為主
+- 程式碼註解可使用英文或繁體中文，視上下文而定
+
 ## Project Overview
 
 R-Controller Package: A MATLAB/Simulink implementation of an R-Controller for magnetic tweezers, controlling 6-pole electromagnetic actuators for precision biological force measurement at piconewton scale.
@@ -12,12 +19,12 @@ R-Controller Package: A MATLAB/Simulink implementation of an R-Controller for ma
 r_controller_package/
 ├── model/
 │   ├── inner_loop_ctrl/              # Inner loop controller components
-│   │   ├── model_base_ctrl_calc_params.m  # Controller parameter calculator
+│   │   ├── model_base_ctrl_params.m       # Controller parameter calculator
 │   │   └── model_base_ctrl_function.m     # Core difference equations
 │   ├── flux_allocation/             # Force control components
 │   │   ├── force_model.m             # Hall voltage → estimated force
 │   │   ├── inverse_model.m           # Force → Hall voltage (LUT-based)
-│   │   └── system_params.m           # System constants and matrices
+│   │   └── force_model_allocation_params.m  # System constants and matrices
 │   └── main_system.slx  # Main Simulink model
 ├── test_script/
 │   ├── inner_loop/                   # Inner loop controller tests
@@ -45,7 +52,7 @@ addpath(fullfile(script_dir, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(script_dir, 'model', 'flux_allocation'));
 
 % Initialize controller parameters (fB_c, fB_e, fB_f in Hz)
-ctrl_params = model_base_ctrl_calc_params(500, 500, 3000);
+ctrl_params = model_base_ctrl_params(500, 500, 3000);
 
 % Run inner loop tests
 run('test_script/inner_loop/run_inner_loop_test.m')
@@ -74,11 +81,11 @@ Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) 
 
 | File | Description |
 |------|-------------|
-| `model/inner_loop_ctrl/model_base_ctrl_calc_params.m` | Computes controller coefficients from bandwidth parameters, creates ParamsBus |
+| `model/inner_loop_ctrl/model_base_ctrl_params.m` | Computes controller coefficients from bandwidth parameters, creates ParamsBus |
 | `model/inner_loop_ctrl/model_base_ctrl_function.m` | Core discrete-time difference equations (runs at 100 kHz) |
 | `model/flux_allocation/inverse_model.m` | Force to Hall voltage conversion using LUT interpolation |
 | `model/flux_allocation/force_model.m` | Hall voltage to estimated force using L-matrix calculations |
-| `model/flux_allocation/system_params.m` | Centralized system constants (D_H matrix, coordinate transforms, LUT paths) |
+| `model/flux_allocation/force_model_allocation_params.m` | Centralized system constants (D_H matrix, coordinate transforms, LUT paths) |
 | `model/main_system.slx` | Main Simulink model |
 
 ### Test Utilities
@@ -90,15 +97,76 @@ Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) 
 | `test_script/utils/quality_check.m` | Steady-state, THD, DC offset detection |
 | `test_script/utils/test_config.m` | Centralized test configuration parameters |
 
-## Code Conventions
+## Development Conventions
 
-### Variable Naming for Pre-computed Operations
+### File Naming
 
-- Addition suffix: `_A_` (e.g., `one_A_beta = 1 + beta`)
-- Subtraction suffix: `_S_` (e.g., `one_S_bc = 1 - bc`)
-- Multiplication suffix: `_M_` (e.g., `b_M_lambda_c`)
-- Division suffix: `_D_` (e.g., `a_D_b`)
-- Negative prefix: `neg_` (e.g., `neg_beta = -beta`)
+| Type | Naming Rule | Example |
+|------|-------------|---------|
+| Model functions | `model_{module}_{function}.m` | `model_base_ctrl_function.m` |
+| Parameter functions | `{module}_params.m` | `model_base_ctrl_params.m`, `force_model_allocation_params.m` |
+| Test scripts | `run_{test_name}.m` or `run_{test_name}_bode.m` | `run_inner_loop_test.m` |
+| Utility functions | `{descriptive_name}.m` (lowercase underscore) | `plot_styles.m`, `fft_analysis.m` |
+
+### Variable Naming
+
+#### General Rules
+- Use **lowercase underscore** (snake_case): `sampling_time`, `force_desired`
+- Matrices/transforms use **uppercase**: `T_m2a`, `D_H`, `B_inv`
+- Constants use **ALL_CAPS_UNDERSCORE**: `MAX_ITERATIONS`, `DEFAULT_BANDWIDTH`
+
+#### Signal Suffixes
+
+| Suffix | Meaning | Example |
+|--------|---------|---------|
+| `_d` | desired | `v_d`, `f_d` |
+| `_m` | measured | `v_m`, `f_m` |
+| `_e` | error | `v_e`, `f_e` |
+| `_hat` | estimated | `w1_hat`, `delta_v_hat` |
+| `_k` | current step | `vf_k`, `uc_k` |
+| `_k1`, `_k2` | previous steps | `vf_k1`, `uc_k2` |
+
+#### Pre-computed Operation Suffixes
+
+| Suffix | Operation | Example |
+|--------|-----------|---------|
+| `_A_` | addition | `one_A_beta = 1 + beta` |
+| `_S_` | subtraction | `one_S_bc = 1 - bc` |
+| `_M_` | multiplication | `b_M_lambda_c` |
+| `_D_` | division | `a_D_b` |
+| `neg_` | negative | `neg_beta = -beta` |
+
+#### Physical Quantity Prefixes
+
+| Prefix | Quantity | Unit |
+|--------|----------|------|
+| `v_` | voltage | [V] |
+| `f_` | force | [pN] |
+| `u_` | control input | [A] |
+| `r_` | position | [µm] |
+| `fB_` | bandwidth | [Hz] |
+| `Ts` | sampling time | [s] |
+| `fs` | sampling frequency | [Hz] |
+
+### Function Naming
+
+| Type | Prefix/Rule | Example |
+|------|-------------|---------|
+| Model core functions | `model_{module}_*` | `model_base_ctrl_function` |
+| Parameter functions | `{module}_params` | `model_base_ctrl_params`, `force_model_allocation_params` |
+| Test scripts | `run_*` | `run_inner_loop_test` |
+| Utility functions | descriptive name | `plot_styles`, `quality_check` |
+| Helper functions | verb prefix | `calc_L_matrices`, `load_lut_data` |
+
+### Structure Naming
+
+| Purpose | Variable Name | Source Function |
+|---------|---------------|-----------------|
+| Controller parameters | `ctrl_params` | `model_base_ctrl_params()` |
+| Allocation parameters | `alloc_params` | `force_model_allocation_params()` |
+| Plot styles | `styles` | `plot_styles()` |
+| Test configuration | `config` | `test_config()` |
+| Test results | `results` | `quality_check()`, `fft_analysis()` |
 
 ### Coordinate Systems
 
@@ -106,11 +174,82 @@ Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) 
 - **Actuator Coordinate**: 6-pole configuration along X/Y/Z axes
 - Transforms: `T_m2a` (Measuring→Actuator), `T_a2m` (Actuator→Measuring)
 
-### Function Naming
+### Code Structure
 
-- Model functions: `model_base_ctrl_*` prefix
-- Test scripts: `run_*_test.m` or `run_*_bode.m`
-- Utilities: Descriptive names (`plot_styles`, `fft_analysis`, etc.)
+#### File Structure Template
+
+```matlab
+function output = function_name(input1, input2, varargin)
+% FUNCTION_NAME Brief one-line description
+%
+% Detailed description (if needed)
+%
+% Inputs:
+%   input1 - Description [unit]
+%   input2 - Description [unit]
+%
+% Optional Parameters (Name-Value pairs):
+%   'ParamName' - Description (default: value)
+%
+% Output:
+%   output - Description
+%
+% Example:
+%   result = function_name(x, y, 'Option', true);
+%
+% See also: RELATED_FUNCTION, CLAUDE.md
+
+    %% Parameter Parsing
+    % Parameter parsing logic
+
+    %% Main Logic Section 1
+    % Main logic
+
+    %% Main Logic Section 2
+    % Main logic
+
+end
+
+% ========================================================================
+% LOCAL FUNCTIONS
+% ========================================================================
+function local_result = helper_function(arg)
+    % Helper function description
+end
+```
+
+#### Section Comments
+
+- **`%%`** only used for major code block separation (large framework)
+- Each `%%` block represents an independent logical unit
+- Visual separation for local functions:
+
+```matlab
+% ========================================================================
+% SUBSECTION (for local functions or visual separation)
+% ========================================================================
+```
+
+#### Inline Comments
+
+```matlab
+% Single line description
+x = y + z;  % Brief end-of-line comment (use sparingly)
+
+% Multi-line description before complex logic
+% Line 1 of explanation
+% Line 2 of explanation
+complex_operation();
+```
+
+### Formatting Standards
+
+| Item | Standard |
+|------|----------|
+| Indentation | 4 spaces |
+| Max line length | 100 characters (recommended), 120 characters (hard limit) |
+| Operator spacing | `a + b`, `x = y`, `f(a, b)` |
+| Block spacing | 1-2 blank lines |
 
 ## Critical Constants
 
@@ -172,7 +311,7 @@ end
 
 % Using test_config
 config = test_config('Type', 'inner_loop');
-params = model_base_ctrl_calc_params(config.fB_c, config.fB_e, config.fB_f);
+ctrl_params = model_base_ctrl_params(config.fB_c, config.fB_e, config.fB_f);
 ```
 
 ---

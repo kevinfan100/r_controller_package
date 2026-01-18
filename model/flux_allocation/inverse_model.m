@@ -1,4 +1,4 @@
-function v_d = inverse_model(f_d, pos_m, params)
+function v_d = inverse_model(f_d, pos_m, alloc_params)
 % INVERSE_MODEL Desired force -> Desired Hall sensor voltage
 %
 % Implements the 8-stage Inverse Model for magnetic tweezers:
@@ -11,32 +11,28 @@ function v_d = inverse_model(f_d, pos_m, params)
 %   Stage 7-8: v_d = D_H_hat^-1 * K_I * I_d
 %
 % Inputs:
-%   f_d    - Desired force (3x1), Measuring coordinate [pN]
-%   pos_m  - Bead position (3x1), Measuring coordinate [um]
-%   params - System parameters from system_params()
+%   f_d          - Desired force (3x1), Measuring coordinate [pN]
+%   pos_m        - Bead position (3x1), Measuring coordinate [um]
+%   alloc_params - System parameters from force_model_allocation_params()
 %
 % Output:
 %   v_d    - Desired Hall sensor voltage (6x1) [V]
+%
+% See also: force_model_allocation_params, force_model, CLAUDE.md
 
-    % ========================================
-    % PERSISTENT LUT DATA
-    % ========================================
+    %% Persistent LUT Data
     persistent LUT_loaded LUT_data
 
     if isempty(LUT_loaded)
-        LUT_data = load_lut_data(params.lut_path);
+        LUT_data = load_lut_data(alloc_params.lut_path);
         LUT_loaded = true;
     end
 
-    % ========================================
-    % STAGE 1: COORDINATE TRANSFORM
-    % ========================================
-    f_a = params.T_m2a * f_d;
-    pos_a = params.T_m2a * pos_m;
+    %% Stage 1: Coordinate Transform
+    f_a = alloc_params.T_m2a * f_d;
+    pos_a = alloc_params.T_m2a * pos_m;
 
-    % ========================================
-    % FORCE MAGNITUDE AND ANGLES
-    % ========================================
+    %% Force Magnitude and Angles
     F_mag = sqrt(f_a(1)^2 + f_a(2)^2 + f_a(3)^2);
 
     if F_mag < 1e-10
@@ -47,9 +43,7 @@ function v_d = inverse_model(f_d, pos_m, params)
     AngleThe = atan2(f_a(2), f_a(1));  % Azimuth
     AnglePhi = asin(f_a(3) / F_mag);   % Elevation
 
-    % ========================================
-    % STAGE 2: OCTANT DETECTION
-    % ========================================
+    %% Stage 2: Octant Detection
     % Octant determined by POSITION signs, not force
     x = pos_a(1);
     y = pos_a(2);
@@ -105,9 +99,7 @@ function v_d = inverse_model(f_d, pos_m, params)
         PhiOct1 = -AnglePhi;
     end
 
-    % ========================================
-    % STAGE 3: ADDRESS CALCULATION
-    % ========================================
+    %% Stage 3: Address Calculation
     CalcAngStep = 2*pi / 60;  % = pi/30
 
     IntThe = floor((TheOct1 + pi) / CalcAngStep);
@@ -125,10 +117,8 @@ function v_d = inverse_model(f_d, pos_m, params)
     addr_01 = IntThe * 31 + min(IntPhi + 1, 30) + 1;
     addr_11 = min(IntThe + 1, 60) * 31 + min(IntPhi + 1, 30) + 1;
 
-    % ========================================
-    % STAGE 4: POLYNOMIAL EXPANSION
-    % ========================================
-    R_norm = params.R_norm;
+    %% Stage 4: Polynomial Expansion
+    R_norm = alloc_params.R_norm;
 
     P1 = abs(pos_a(1)) / R_norm;
     P2 = abs(pos_a(2)) / R_norm;
@@ -136,9 +126,7 @@ function v_d = inverse_model(f_d, pos_m, params)
 
     PosCoeff = [1; P1; P2; P3; P1^2; P2^2; P3^2; P1*P2; P1*P3; P2*P3];
 
-    % ========================================
-    % STAGE 5: BILINEAR INTERPOLATION
-    % ========================================
+    %% Stage 5: Bilinear Interpolation
     I_ind = zeros(6, 4);
     for corner = 1:4
         if corner == 1
@@ -160,7 +148,7 @@ function v_d = inverse_model(f_d, pos_m, params)
     t = FracPhi;
 
     % Current scaling: I = I_lut * sqrt(F_mag * force_scale / g_H)
-    current_scale = sqrt(F_mag / (params.g_H / params.force_scale));
+    current_scale = sqrt(F_mag / (alloc_params.g_H / alloc_params.force_scale));
 
     I_interp = zeros(6, 1);
     if s ~= 0 && t ~= 0
@@ -183,9 +171,7 @@ function v_d = inverse_model(f_d, pos_m, params)
         end
     end
 
-    % ========================================
-    % STAGE 6: OCTANT CURRENT REMAP
-    % ========================================
+    %% Stage 6: Octant Current Remap
     % Index swapping based on position octant
     I_d = zeros(6, 1);
     switch octant
@@ -207,17 +193,15 @@ function v_d = inverse_model(f_d, pos_m, params)
             I_d = I_interp([1, 2, 4, 3, 6, 5]);
     end
 
-    % ========================================
-    % STAGE 7-8: CURRENT TO VOLTAGE
-    % ========================================
-    v_d = params.DH_hat_inv_KI * I_d;
+    %% Stage 7-8: Current to Voltage
+    v_d = alloc_params.DH_hat_inv_KI * I_d;
 
 end
 
 
-% ========================================
-% HELPER: LOAD LUT DATA
-% ========================================
+% ========================================================================
+% LOCAL FUNCTIONS
+% ========================================================================
 function LUT_data = load_lut_data(lut_path)
 % LOAD_LUT_DATA Load LUT coefficient files
 %

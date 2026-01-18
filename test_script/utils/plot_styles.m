@@ -32,9 +32,6 @@ function styles = plot_styles()
 %
 % Reference implementation of project standards.
 % See also: CLAUDE.md - "Plot Style Standards" section
-%
-% Author: R-Controller Package Team
-% Date: 2025-01-17
 
     % ========================================================================
     % Channel Colors (P1-P6)

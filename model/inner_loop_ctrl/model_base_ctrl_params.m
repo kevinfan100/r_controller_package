@@ -1,29 +1,25 @@
-function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
-    % R Controller Parameter Calculator (with Bus Object creation)
-    %
-    % Calculate all controller coefficients from bandwidth parameters
-    % and create the corresponding Simulink Bus Object definition.
-    %
-    % Inputs:
-    %   fB_c - Control bandwidth [Hz]
-    %   fB_e - Estimator bandwidth [Hz]
-    %   fB_f - Feedforward bandwidth [Hz]
-    %
-    % Output:
-    %   params - Simulink.Parameter object with Bus type
-    %
-    % Variable naming convention:
-    %   - Addition: A (e.g., one_A_beta = 1 + beta)
-    %   - Subtraction: S (e.g., one_S_bc = 1 - bc)
-    %   - Multiplication: M (e.g., b_M_lambda_c = b * lambda_c)
-    %   - Division: D (e.g., a_D_b = a / b)
-    %   - Negative: neg_ (e.g., neg_beta = -beta)
-    %
-    % Note: This function also creates 'ParamsBus' in base workspace
+function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
+% MODEL_BASE_CTRL_PARAMS R Controller parameter calculator with Bus Object creation
+%
+% Calculate all controller coefficients from bandwidth parameters and create
+% the corresponding Simulink Bus Object definition.
+%
+% Inputs:
+%   fB_c - Control bandwidth [Hz]
+%   fB_e - Estimator bandwidth [Hz]
+%   fB_f - Feedforward bandwidth [Hz]
+%
+% Output:
+%   ctrl_params - Simulink.Parameter object with Bus type
+%
+% Example:
+%   ctrl_params = model_base_ctrl_params(300, 500, 1000);
+%
+% Note: This function creates 'ParamsBus' in base workspace
+%
+% See also: model_base_ctrl_function, CLAUDE.md
 
-    % ========================================
-    % SYSTEM CONSTANTS
-    % ========================================
+    %% System Constants
     params.k_o = 5.6695e-4;              % Plant gain from H(z^-1)
     params.b = 0.9782;                   % Zero coefficient from H(z^-1)
     params.a1 = 1.934848;                % Pole coefficient 1
@@ -39,9 +35,7 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
         -0.0244  -0.0330  -0.0257  -0.0245  -0.0030   0.1845] .*1;
     params.B_inv = inv(B);
 
-    % ========================================
-    % INTERMEDIATE PARAMETERS
-    % ========================================
+    %% Intermediate Parameters
     lambda_f = exp(-fB_f * 2 * pi * params.T);
     lambda_c = exp(-fB_c * 2 * pi * params.T);
     lambda_e = exp(-fB_e * 2 * pi * params.T);
@@ -60,20 +54,15 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     params.bc = bc;
     params.ku = ku;
 
-    % ========================================
-    % FEEDFORWARD FILTER COEFFICIENTS
+    %% Feedforward Filter Coefficients
     % vf[k] = λf*vf[k-1] + kff{ vd[k] - λcvd[k-1]}
-    % ========================================
-
     params.kff = (1 - lambda_f) / (1-lambda_c); % kff = 1 - λf/1 - λc
     params.one_S_bc = 1 - bc; % 1 - bc
 
-    % ========================================
-    % ESTIMATOR GAINS
+    %% Estimator Gains
     % delta_v_hat[k] = lambda_c * delta_v_hat[k-1] + delta_vf[k] + L1 * error
     % w1_hat[k] = (1+beta) * w1_hat[k-1] - beta * w2_hat[k-1] + L2 * error
     % w2_hat[k] = w1_hat[k-1] + L3 * error
-    % ========================================
     params.L1 = lambda_c + (1 + beta) - 3*lambda_e;
 
     params.L2 = (params.b*(lambda_e - 1)^3 - ...
@@ -90,15 +79,10 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     params.one_A_beta = 1 + beta;        % 1 + beta
     params.neg_beta = -beta;             % -beta
 
-    % ========================================
-    % CONTROL LAW COEFFICIENTS
-    % (reuse existing parameters)
-    % ========================================
+    %% Control Law Coefficients
     % ku, a1, a2, one_S_bc, bc already defined above
 
-    % ========================================
-    % CREATE SIMULINK BUS OBJECT
-    % ========================================
+    %% Create Simulink Bus Object
     % Simulink requires explicit Bus Object definition for structures
     ParamsBus = Simulink.Bus;
     ParamsBus.Description = 'R Controller Parameters Structure';
@@ -191,11 +175,10 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     % Save ParamsBus to base workspace
     assignin('base', 'ParamsBus', ParamsBus);
 
-    % ========================================
-    % WRAP AS SIMULINK.PARAMETER WITH BUS TYPE
-    % ========================================
+    %% Wrap as Simulink.Parameter with Bus Type
     params_data = params;  % Keep the raw data
-    params = Simulink.Parameter(params_data);
-    params.DataType = 'Bus: ParamsBus';
-    params.Description = 'R Controller Parameters';
+    ctrl_params = Simulink.Parameter(params_data);
+    ctrl_params.DataType = 'Bus: ParamsBus';
+    ctrl_params.Description = 'R Controller Parameters';
+
 end

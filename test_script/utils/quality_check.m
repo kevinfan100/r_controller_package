@@ -32,9 +32,6 @@ function results = quality_check(signal, fs, amplitude, varargin)
 %
 % Reference implementation of project standards.
 % See also: CLAUDE.md - "Signal Quality Check Standards" section
-%
-% Author: R-Controller Package Team
-% Date: 2025-01-17
 
     % Parse optional parameters
     p = inputParser;

@@ -48,11 +48,8 @@ fB_f = 1000;
 fB_c = 300;              
 fB_e = 500;             
 
-% ==================== 計算控制器參數 ====================
-% 使用 model_base_ctrl_calc_params 計算所有控制器係數
-% 此函數會自動創建 Bus Object 並包裝為 Simulink.Parameter
-params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
-% ======================================================
+% 計算控制器參數
+ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
 
 % ==================== PI 控制器參數（備用）====================
 Kp_value = 2;                   % 比例增益
@@ -109,7 +106,7 @@ fprintf('  Solver: %s (固定步長)\n', solver);
 fprintf('\n');
 
 % 取得 b 參數值用於理論曲線計算
-b_value = params.Value.b;
+b_value = ctrl_params.Value.b;
 fprintf('  理論模型參數 b: %.4f\n', b_value);
 fprintf('\n');
 
@@ -195,7 +192,7 @@ for d_idx = 1:num_d
         assignin('base', 'Phase', Phase);
         assignin('base', 'StepTime', StepTime);
         assignin('base', 'd', d);  % Preview samples (d=0 或 d=2)
-        assignin('base', 'params', params);
+        assignin('base', 'params', ctrl_params);
         assignin('base', 'Kp_value', Kp_value);
         assignin('base', 'Ki_value', Ki_value);
 
@@ -488,7 +485,7 @@ for d_idx = 1:num_d
 
     % ========== 計算新的理論值（A(θ; λf, b) 和 φ(θ; λf, b)）==========
     % 提取理論曲線所需參數
-    lambda_f = params.Value.lambda_f;
+    lambda_f = ctrl_params.Value.lambda_f;
     kf = (1 - lambda_f) / (1 + b_value);
 
     % 定義密集頻率點（讓理論曲線平滑）
