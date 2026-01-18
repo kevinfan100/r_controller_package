@@ -151,10 +151,10 @@ else
 end
 
 % Load system parameters (for Phase 2 models)
-inv_params = system_params();
+inv_params = force_model_allocation_params();
 
 % Load R-Controller parameters
-ctrl_params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
+ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
 
 % System constants
 Ts = 1e-5;                      % Sampling time [s] (100 kHz)
