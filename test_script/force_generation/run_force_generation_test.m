@@ -150,11 +150,26 @@ else
     controller_label = 'PI-Controller';
 end
 
-% Load system parameters (for Phase 2 models)
+% Load system parameters with Simulink Bus support
+% SampleRateMode: 1=ZOH, 2=Linear (default), 3=Direct
+if strcmpi(generation_mode, 'hardware')
+    if strcmpi(interp_method, 'previous')
+        sample_rate_mode = 1;  % ZOH
+    else
+        sample_rate_mode = 2;  % Linear
+    end
+else
+    sample_rate_mode = 3;  % Direct (100 kHz)
+end
+
+alloc_params_sim = force_model_allocation_params('Simulink', true, ...
+    'pos_m', bead_position, 'SampleRateMode', sample_rate_mode);
+
+% For offline analysis (not used by Simulink, but kept for compatibility)
 inv_params = force_model_allocation_params();
 
 % Load R-Controller parameters
-ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f);
 
 % System constants
 Ts = 1e-5;                      % Sampling time [s] (100 kHz)
@@ -178,10 +193,9 @@ if strcmpi(signal_type, 'sine')
 end
 fprintf('  Bead position: [%.1f, %.1f, %.1f] um\n', bead_position);
 fprintf('  Simulation time: %.3f s\n', sim_time);
-fprintf('  Generation mode: %s\n', upper(generation_mode));
+fprintf('  Generation mode: %s (SampleRateMode=%d)\n', upper(generation_mode), sample_rate_mode);
 if strcmpi(generation_mode, 'hardware')
-    fprintf('    - Update rate: %d Hz, Interp: %s, Realtime: %s\n', ...
-        pos_update_rate, interp_method, string(USE_REALTIME_INTERP));
+    fprintf('    - Handled by inverse_model_function in Simulink\n');
 end
 if ControllerType == 1
     fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
@@ -191,149 +205,41 @@ end
 fprintf('\n');
 
 
-%%                        SECTION 3: Generate f_d and Compute vd
+%%                        SECTION 3: Generate f_d Timeseries
 
 
-fprintf('【Generate Vd Timeseries】\n');
+fprintf('【Generate f_d Timeseries】\n');
 fprintf('────────────────────────\n');
 
-% Validate generation_mode
-generation_mode = lower(generation_mode);
-if ~ismember(generation_mode, {'hardware', 'ideal'})
-    error('Invalid generation_mode: %s. Use ''hardware'' or ''ideal''.', generation_mode);
-end
+% The new Simulink model handles inverse_model internally via inverse_model_function.
+% Rate transition (ZOH/Linear/Direct) is controlled by alloc_params.sample_rate_mode.
+% We only need to generate the f_d timeseries here.
 
-% ─────────────────────────────────────────────────────────────────────────
-% 3.1 Define time axis
-% ─────────────────────────────────────────────────────────────────────────
-Ts_ctrl = Ts;                           % 100 kHz (R-Controller)
-N_ctrl = round(sim_time / Ts_ctrl) + 1;
-t_ctrl = (0:N_ctrl-1)' * Ts_ctrl;       % 100 kHz time axis
+% Define time axis at 100 kHz
+N = round(sim_time / Ts) + 1;
+t = (0:N-1)' * Ts;
 
-if strcmpi(generation_mode, 'hardware')
-    % ═══════════════════════════════════════════════════════════════════════
-    % HARDWARE MODE: Low rate generation + interpolation to 100 kHz
-    % ═══════════════════════════════════════════════════════════════════════
-    fprintf('  Mode: HARDWARE (simulate hardware constraint)\n');
+fprintf('  Simulation rate: %.0f kHz (%d points)\n', 1/Ts/1000, N);
+sample_rate_labels = {'ZOH (1600 Hz)', 'Linear (1600 Hz)', 'Direct (100 kHz)'};
+fprintf('  SampleRateMode: %d (%s)\n', sample_rate_mode, sample_rate_labels{sample_rate_mode});
 
-    Ts_pos = 1 / pos_update_rate;       % Position update rate
-    N_pos = round(sim_time / Ts_pos) + 1;
-    t_pos = (0:N_pos-1)' * Ts_pos;      % Low rate time axis
-
-    fprintf('  Position update rate: %d Hz (%d points)\n', pos_update_rate, N_pos);
-    fprintf('  Controller rate: %.0f kHz (%d points)\n', 1/Ts_ctrl/1000, N_ctrl);
-    fprintf('  Frequency ratio: %.1f (%.1f us per update)\n', Ts_pos / Ts_ctrl, Ts_pos * 1e6);
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.2 Generate f_d at low rate
-    % ─────────────────────────────────────────────────────────────────────
-    f_d_low = zeros(N_pos, 3);
-    if strcmpi(signal_type, 'sine')
-        envelope_low = force_amplitude * sin(2*pi*force_frequency*t_pos + deg2rad(force_phase));
-        f_d_low = envelope_low .* force_direction';
-    else
-        idx_step_low = t_pos >= step_time;
-        f_d_low(idx_step_low, :) = repmat(force_amplitude * force_direction', sum(idx_step_low), 1);
-    end
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.3 Compute vd at low rate (call inverse_model)
-    % ─────────────────────────────────────────────────────────────────────
-    fprintf('  Computing inverse_model @ %d Hz...', pos_update_rate);
-    tic;
-    vd_low = zeros(N_pos, 6);
-    for i = 1:N_pos
-        vd_low(i, :) = inverse_model(f_d_low(i, :)', bead_position, inv_params)';
-    end
-    fprintf(' Done (%.2f sec)\n', toc);
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.4 Interpolate vd to 100 kHz
-    % ─────────────────────────────────────────────────────────────────────
-    if USE_REALTIME_INTERP
-        fprintf('  Interpolating vd to 100 kHz (REAL-TIME, %s)...', interp_method);
-        tic;
-
-        if strcmp(interp_method, 'previous')  % ZOH
-            t_query = t_ctrl;
-            expected_delay_T = 0.5;
-        else  % Linear
-            t_query = t_ctrl - Ts_pos;
-            expected_delay_T = 1.0;
-        end
-
-        t_query(t_query < 0) = 0;
-        vd = interp1(t_pos, vd_low, t_query, interp_method, 'extrap');
-
-        interp_delay_us = expected_delay_T * Ts_pos * 1e6;
-        fprintf(' Done (%.2f sec, delay=%.1fT=%.1f us)\n', toc, expected_delay_T, interp_delay_us);
-    else
-        fprintf('  Interpolating vd to 100 kHz (IDEAL, %s, non-causal)...', interp_method);
-        tic;
-        vd = interp1(t_pos, vd_low, t_ctrl, interp_method, 'extrap');
-        fprintf(' Done (%.2f sec)\n', toc);
-    end
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.5 Reference signal f_d (same interpolation as vd)
-    % ─────────────────────────────────────────────────────────────────────
-    if USE_REALTIME_INTERP
-        f_d = interp1(t_pos, f_d_low, t_query, interp_method, 'extrap');
-    else
-        f_d = interp1(t_pos, f_d_low, t_ctrl, interp_method, 'extrap');
-    end
-
-    fprintf('  vd range (low): [%.4f, %.4f] V\n', min(vd_low(:)), max(vd_low(:)));
-    fprintf('  vd range (high): [%.4f, %.4f] V\n', min(vd(:)), max(vd(:)));
-
+% Generate f_d at 100 kHz
+f_d = zeros(N, 3);
+if strcmpi(signal_type, 'sine')
+    envelope = force_amplitude * sin(2*pi*force_frequency*t + deg2rad(force_phase));
+    f_d = envelope .* force_direction';
+    fprintf('  f_d: Sine wave, %.1f Hz, %.2f pN amplitude\n', force_frequency, force_amplitude);
 else
-    % ═══════════════════════════════════════════════════════════════════════
-    % IDEAL MODE: Direct 100 kHz generation (no interpolation)
-    % ═══════════════════════════════════════════════════════════════════════
-    fprintf('  Mode: IDEAL (direct 100 kHz generation)\n');
-    fprintf('  Controller rate: %.0f kHz (%d points)\n', 1/Ts_ctrl/1000, N_ctrl);
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.2 Generate f_d at 100 kHz
-    % ─────────────────────────────────────────────────────────────────────
-    f_d = zeros(N_ctrl, 3);
-    if strcmpi(signal_type, 'sine')
-        envelope = force_amplitude * sin(2*pi*force_frequency*t_ctrl + deg2rad(force_phase));
-        f_d = envelope .* force_direction';
-    else
-        idx_step = t_ctrl >= step_time;
-        f_d(idx_step, :) = repmat(force_amplitude * force_direction', sum(idx_step), 1);
-    end
-
-    % ─────────────────────────────────────────────────────────────────────
-    % 3.3 Compute vd at 100 kHz (call inverse_model)
-    % ─────────────────────────────────────────────────────────────────────
-    fprintf('  Computing inverse_model @ 100 kHz (%d points)...\n', N_ctrl);
-    fprintf('    WARNING: This may take a while...\n');
-    tic;
-    vd = zeros(N_ctrl, 6);
-
-    % Progress indicator
-    progress_interval = round(N_ctrl / 10);
-    for i = 1:N_ctrl
-        vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
-        if mod(i, progress_interval) == 0
-            fprintf('    Progress: %d%%\n', round(i/N_ctrl*100));
-        end
-    end
-    fprintf('  Done (%.2f sec)\n', toc);
-
-    fprintf('  vd range: [%.4f, %.4f] V\n', min(vd(:)), max(vd(:)));
-
-    % Set placeholder for hardware mode variables (not used)
-    vd_low = [];
-    f_d_low = [];
-    t_pos = [];
+    idx_step = t >= step_time;
+    f_d(idx_step, :) = repmat(force_amplitude * force_direction', sum(idx_step), 1);
+    fprintf('  f_d: Step at %.3f s, %.2f pN amplitude\n', step_time, force_amplitude);
 end
 
-% Update main time axis
-t = t_ctrl;
-N = N_ctrl;
+fprintf('  f_d range: [%.4f, %.4f] pN\n', min(f_d(:)), max(f_d(:)));
+
+% Create timeseries for Simulink From Workspace block
+f_d_timeseries = timeseries(f_d, t);
+f_d_timeseries.Name = 'f_d_external';
 
 fprintf('\n');
 
@@ -345,30 +251,45 @@ if USE_SIMULINK
     fprintf('【Simulink Simulation】\n');
     fprintf('────────────────────────\n');
 
-    % Prepare vd_timeseries for Simulink From Workspace block
-    vd_timeseries = timeseries(vd, t);
-    vd_timeseries.Name = 'vd_external';
-    assignin('base', 'vd_timeseries', vd_timeseries);
+    % ─────────────────────────────────────────────────────────────────────
+    % New Vd Generator parameters (Bus-based architecture)
+    % ─────────────────────────────────────────────────────────────────────
+    % signal_type = 2 (Force mode): Simulink uses inverse_model_function
+    % Rate transition (ZOH/Linear/Direct) is controlled by alloc_params.sample_rate_mode
+    sim_signal_type = 2;  % Force mode
+    assignin('base', 'signal_type', sim_signal_type);
 
-    % Set SignalType = 3 (External mode)
-    SignalType = 3;
-    assignin('base', 'SignalType', SignalType);
+    % f_d timeseries for Force mode
+    assignin('base', 'f_d_timeseries', f_d_timeseries);
 
-    % Set other required parameters (not used in mode 3, but needed)
-    assignin('base', 'Channel', 1);
-    assignin('base', 'Amplitude', 0);
-    assignin('base', 'Frequency', force_frequency);
-    assignin('base', 'Phase', 0);
-    assignin('base', 'StepTime', 0);
-    assignin('base', 'd', 0);  % Preview samples
-    assignin('base', 'params', ctrl_params);
+    % alloc_params (contains pos_m, sample_rate_mode, LUT, etc.)
+    assignin('base', 'alloc_params', alloc_params_sim);
 
-    % Set controller type and parameters
+    % vd_signal_params (required by Signal mode, but not used in Force mode)
+    % Create a dummy one to avoid Simulink errors
+    vd_sig_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
+        'Frequency', 100, 'Ts', Ts, 'd', 0);
+    assignin('base', 'vd_signal_params', vd_sig_params);
+
+    % ─────────────────────────────────────────────────────────────────────
+    % Controller parameters
+    % ─────────────────────────────────────────────────────────────────────
     assignin('base', 'ControllerType', ControllerType);
+
+    % R-Controller parameters
+    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params_local);
+
+    % PI-Controller parameters
+    pi_ctrl_params_local = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
+    assignin('base', 'pi_ctrl_params', pi_ctrl_params_local);
+
+    % Legacy parameters (for backward compatibility)
     assignin('base', 'Kp_value', Kp_value);
     assignin('base', 'Ki_value', Ki_value);
 
-    % Load Simulink model
+    % ─────────────────────────────────────────────────────────────────────
+    % Load and run Simulink model
+    % ─────────────────────────────────────────────────────────────────────
     model_name = 'main_system';
     model_path = fullfile(package_root, 'model', [model_name '.slx']);
 
@@ -382,51 +303,106 @@ if USE_SIMULINK
     % Run simulation
     fprintf('  Running Simulink... ');
     tic;
-    out = sim(model_name);
+    simOut = sim(model_name);
     fprintf('Done (%.2f sec)\n', toc);
 
-    % Extract vm from simulation output
-    vm_sim = out.Vm;
+    % ─────────────────────────────────────────────────────────────────────
+    % Extract outputs from simulation
+    % ─────────────────────────────────────────────────────────────────────
+    % Vm: measured Hall voltage (6x1) from R-Controller output
+    Vm_ts = simOut.get('Vm');
+    if isa(Vm_ts, 'timeseries')
+        vm_sim = Vm_ts.Data;
+        t_vm = Vm_ts.Time;
+    else
+        vm_sim = Vm_ts;
+        t_vm = (0:size(vm_sim,1)-1)' * Ts;
+    end
 
-    % vm is logged at fixed Ts rate, create proper time vector
-    N_vm = size(vm_sim, 1);
-    t_vm = (0:N_vm-1)' * Ts;
+    % Fm: estimated force (3x1) from Force_Model block
+    Fm_ts = simOut.get('Fm');
+    if isa(Fm_ts, 'timeseries')
+        fm_sim = Fm_ts.Data;
+    else
+        fm_sim = Fm_ts;
+    end
 
     % Resample to match our time axis if needed
+    N_vm = size(vm_sim, 1);
     if N_vm ~= N
         fprintf('  Resampling vm (%d -> %d points)...\n', N_vm, N);
         vm = zeros(N, 6);
         for ch = 1:6
             vm(:, ch) = interp1(t_vm, vm_sim(:, ch), t, 'linear', 'extrap');
         end
+        f_m = zeros(N, 3);
+        for ax = 1:3
+            f_m(:, ax) = interp1(t_vm, fm_sim(:, ax), t, 'linear', 'extrap');
+        end
     else
         vm = vm_sim;
+        f_m = fm_sim;
     end
 
     fprintf('  vm range: [%.4f, %.4f] V\n', min(vm(:)), max(vm(:)));
+    fprintf('  f_m range: [%.4f, %.4f] pN\n', min(f_m(:)), max(f_m(:)));
+
+    % ─────────────────────────────────────────────────────────────────────
+    % Compute vd offline for plotting (optional, for Tab 2 display)
+    % Note: This is a reference calculation, not the actual vd used in Simulink
+    % ─────────────────────────────────────────────────────────────────────
+    fprintf('  Computing offline vd for reference plots...');
+    tic;
+    vd = zeros(N, 6);
+    for i = 1:N
+        vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
+    end
+    fprintf(' Done (%.2f sec)\n', toc);
+
 else
     fprintf('【Ideal Tracking Mode】\n');
     fprintf('────────────────────────\n');
+
+    % Compute vd offline using inverse_model
+    fprintf('  Computing vd from inverse_model...');
+    tic;
+    vd = zeros(N, 6);
+    for i = 1:N
+        vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
+    end
+    fprintf(' Done (%.2f sec)\n', toc);
+
     fprintf('  Assuming perfect tracking: vm = vd\n');
     vm = vd;
+
+    % Compute f_m offline using force_model
+    fprintf('  Computing f_m from force_model...');
+    tic;
+    f_m = zeros(N, 3);
+    for i = 1:N
+        f_m(i, :) = force_model(vm(i, :)', bead_position, inv_params)';
+    end
+    fprintf(' Done (%.2f sec)\n', toc);
 end
 
 fprintf('\n');
 
 
-%%                        SECTION 5: Compute f_m using Force Model
+%%                        SECTION 5: Force Model Results
+%
+% Note: f_m is now computed in Section 4:
+%   - USE_SIMULINK=true:  f_m comes directly from Force_Model block output (Fm)
+%   - USE_SIMULINK=false: f_m computed offline using force_model()
 
-
-fprintf('【Compute Force Model】\n');
+fprintf('【Force Model Results】\n');
 fprintf('────────────────────────\n');
 
-fprintf('  Computing force_model...');
-tic;
-f_m = zeros(N, 3);
-for i = 1:N
-    f_m(i, :) = force_model(vm(i, :)', bead_position, inv_params)';
+if USE_SIMULINK
+    fprintf('  f_m obtained from Simulink Force_Model block (force_model_function)\n');
+else
+    fprintf('  f_m computed offline using force_model()\n');
 end
-fprintf(' Done (%.2f sec)\n', toc);
+fprintf('  f_m range: [%.4f, %.4f] pN\n', min(f_m(:)), max(f_m(:)));
 
 
 %%                        SECTION 6: Analysis
@@ -651,9 +627,16 @@ if ENABLE_PLOT
 
         % Extract u from simulation output based on controller type
         if ControllerType == 1  % R-Controller
-            u_data = out.u;
+            u_ts = simOut.get('u');
         else  % PI-Controller
-            u_data = out.u_pi;
+            u_ts = simOut.get('u_pi');
+        end
+
+        % Handle timeseries or array format
+        if isa(u_ts, 'timeseries')
+            u_data = u_ts.Data;
+        else
+            u_data = u_ts;
         end
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
@@ -942,26 +925,18 @@ if SAVE_MAT || SAVE_PNG
         results.config.Ki_value = Ki_value;
         results.config.USE_SIMULINK = USE_SIMULINK;
         results.config.generation_mode = generation_mode;
+        results.config.sample_rate_mode = sample_rate_mode;
         if strcmpi(generation_mode, 'hardware')
             results.config.pos_update_rate = pos_update_rate;
             results.config.interp_method = interp_method;
-            results.config.USE_REALTIME_INTERP = USE_REALTIME_INTERP;
-            results.config.interp_delay_us = Ts_pos * 1e6;
         end
 
         results.data.t = t;
         results.data.f_d = f_d;
-        results.data.vd = vd;
+        results.data.vd = vd;  % Offline reference (not actual Simulink vd)
         results.data.vm = vm;
         results.data.f_m = f_m;
         results.data.force_error = force_error;
-
-        % Low-rate data (only for hardware mode)
-        if strcmpi(generation_mode, 'hardware')
-            results.data.t_pos = t_pos;
-            results.data.f_d_low = f_d_low;
-            results.data.vd_low = vd_low;
-        end
 
         results.analysis.force_error_rms = force_error_rms;
         results.analysis.force_error_max = force_error_max;

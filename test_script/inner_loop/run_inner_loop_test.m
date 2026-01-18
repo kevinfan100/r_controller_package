@@ -76,13 +76,6 @@ fprintf('================================================================\n');
 fprintf('           R Controller Inner Loop Test\n');
 fprintf('================================================================\n\n');
 
-% Convert signal type to numeric for Simulink
-if strcmpi(signal_type_name, 'sine')
-    SignalType = 1;
-else
-    SignalType = 2;
-end
-
 % Validation
 if ~ismember(lower(signal_type_name), {'step', 'sine'})
     error('signal_type_name must be ''step'' or ''sine''');
@@ -92,18 +85,38 @@ if channel < 1 || channel > 6
     error('channel must be between 1 and 6');
 end
 
-% For Simulink (uses PascalCase)
-Channel = channel;
-Amplitude = amplitude;
-Frequency = frequency;
-Phase = phase;
-StepTime = step_time;
+% Convert signal_type_name to vd_signal_params mode
+% mode: 1=Sine, 2=Step (matches vd_signal_function)
+if strcmpi(signal_type_name, 'sine')
+    vd_mode = 1;
+else
+    vd_mode = 2;
+end
+
+% Create vd_signal_params using the new Bus-based parameter structure
+vd_sig_params = vd_signal_params( ...
+    'Mode', vd_mode, ...
+    'Channel', channel, ...
+    'Amplitude', amplitude, ...
+    'Frequency', frequency, ...
+    'Phase', phase, ...
+    'StepTime', step_time, ...
+    'Ts', Ts, ...
+    'd', d);
+
+% Create alloc_params (required by Force_Model block, even in Signal mode)
+alloc_params_sim = force_model_allocation_params('Simulink', true, ...
+    'pos_m', [0; 0; 0], 'SampleRateMode', 2);
+
+% signal_type for Simulink: 1=Signal mode, 2=Force mode
+% Inner loop test always uses Signal mode
+signal_type = 1;
 
 % Display configuration
 fprintf('[Workspace Variables]\n');
 fprintf('------------------------\n');
 fprintf('  Controller: %s (ControllerType=%d)\n', controller_type, ControllerType);
-fprintf('  SignalType: %d (%s)\n', SignalType, signal_type_name);
+fprintf('  signal_type: %d (Signal mode), vd_mode: %d (%s)\n', signal_type, vd_mode, signal_type_name);
 fprintf('  Channel: %d\n', channel);
 fprintf('  Amplitude: %.3f V\n', amplitude);
 
@@ -187,6 +200,7 @@ set_param(model_name, 'MaxStep', num2str(Ts/10));
 fprintf('  StopTime: %.4f s, Solver: ode45, MaxStep: %.2e s\n', sim_time, Ts/10);
 
 % Assign variables to base workspace
+% Controller parameters
 if strcmpi(controller_type, 'model_base_ctrl')
     assignin('base', 'model_base_ctrl_params', model_base_ctrl_params);
 else
@@ -194,11 +208,17 @@ else
 end
 assignin('base', 'ControllerType', ControllerType);
 
-% External vd timeseries (not used for inner loop test)
-vd_timeseries = timeseries(zeros(2, 6), [0; sim_time]);
-assignin('base', 'vd_timeseries', vd_timeseries);
+% New Vd Generator parameters (Bus-based)
+assignin('base', 'signal_type', signal_type);
+assignin('base', 'vd_signal_params', vd_sig_params);
+assignin('base', 'alloc_params', alloc_params_sim);
 
-fprintf('  Parameters loaded to workspace\n\n');
+% f_d timeseries (required by Force mode, but not used in Signal mode)
+f_d_timeseries = timeseries(zeros(2, 3), [0; sim_time]);
+assignin('base', 'f_d_timeseries', f_d_timeseries);
+
+fprintf('  Parameters loaded to workspace\n');
+fprintf('    signal_type=%d, vd_signal_params (Bus), alloc_params (Bus)\n\n', signal_type);
 
 %% Run Simulation
 
