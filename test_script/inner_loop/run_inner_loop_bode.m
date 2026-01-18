@@ -39,13 +39,9 @@ fB_c = 300;
 fB_e = 500;
 
 % Compute controller parameters
-ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
-b_value = ctrl_params.Value.b;
-lambda_f = ctrl_params.Value.lambda_f;
-
-% PI controller parameters (alternative)
-Kp_value = config.Kp_default;
-Ki_value = config.Ki_default;
+model_base_ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+b_value = model_base_ctrl_params.Value.b;
+lambda_f = model_base_ctrl_params.Value.lambda_f;
 
 % Output settings
 SAVE_RESULTS = true;
@@ -136,10 +132,8 @@ for freq_idx = 1:num_freq
     assignin('base', 'Phase', 0);
     assignin('base', 'StepTime', 0);
     assignin('base', 'd', d);
-    assignin('base', 'params', ctrl_params);
-    assignin('base', 'Kp_value', Kp_value);
-    assignin('base', 'Ki_value', Ki_value);
-    assignin('base', 'ControllerType', 1);
+    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params);
+    assignin('base', 'ControllerType', config.controller_type_enum.MODEL_BASE_CTRL);
 
     % External vd timeseries (not used for inner loop test)
     vd_ts = timeseries(zeros(2, 6), [0; sim_time]);

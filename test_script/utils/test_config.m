@@ -116,6 +116,15 @@ function config = test_config(varargin)
     end
 
     % ========================================================================
+    % Controller Type Selection
+    % ========================================================================
+    % 'model_base_ctrl' = R-Controller (Model Based Control)
+    % 'pi_ctrl' = PI Controller
+    config.default_controller_type = 'model_base_ctrl';
+    config.controller_type_enum.MODEL_BASE_CTRL = 1;
+    config.controller_type_enum.PI_CTRL = 2;
+
+    % ========================================================================
     % PI Controller Parameters (alternative to R-Controller)
     % ========================================================================
     config.Kp_default = 2;                  % Default proportional gain

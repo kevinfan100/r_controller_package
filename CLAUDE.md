@@ -168,6 +168,21 @@ Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) 
 | Test configuration | `config` | `test_config()` |
 | Test results | `results` | `quality_check()`, `fft_analysis()` |
 
+### Controller Parameter Naming Convention
+
+所有控制器參數遵循**名稱統一原則**：函數名 = 變數名 = Bus Object 基礎名 = Simulink Workspace 變數名
+
+| Controller | Function | Variable | Bus Object | Simulink Workspace |
+|------------|----------|----------|------------|-------------------|
+| Model Based Control | `model_base_ctrl_params()` | `model_base_ctrl_params` | `ModelBaseCtrlParamsBus` | `model_base_ctrl_params` |
+| PI Control | `pi_ctrl_params()` | `pi_ctrl_params` | `PICtrlParamsBus` | `pi_ctrl_params` |
+
+**命名規則：**
+- 函數名使用 snake_case：`{controller_type}_params()`
+- 變數名與函數名相同
+- Bus Object 使用 PascalCase：`{ControllerType}ParamsBus`
+- Simulink Workspace 變數名與變數名相同
+
 ### Coordinate Systems
 
 - **Measuring Coordinate**: Based on Hall sensor layout

@@ -22,6 +22,9 @@ addpath(fullfile(package_root, 'test_script', 'utils'));
 test_name = 'test';
 signal_type_name = 'sine';          % 'step' or 'sine'
 
+% Controller type: 'model_base_ctrl' or 'pi_ctrl'
+controller_type = 'model_base_ctrl';
+
 % Signal parameters
 d = 0;                              % Preview steps
 channel = 1;                        % Excitation channel (1-6)
@@ -37,24 +40,29 @@ step_sim_time = 0.5;                % Step mode simulation time [s]
 config = test_config('Type', 'inner_loop');
 styles = plot_styles();
 
-% Override controller bandwidths if needed
+% R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
 fB_f = 1000;
 fB_c = 300;
 fB_e = 500;
 
-% Compute lambda values for display
-Ts = config.Ts;
-lambda_f = exp(-fB_f * Ts * 2 * pi);
-lambda_c = exp(-fB_c * Ts * 2 * pi);
-lambda_e = exp(-fB_e * Ts * 2 * pi);
-beta = sqrt(lambda_e * lambda_c);
-
-% Compute controller parameters
-ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
-
-% PI controller parameters (alternative)
+% PI controller parameters (used when controller_type = 'pi_ctrl')
 Kp_value = config.Kp_default;
 Ki_value = config.Ki_default;
+
+% Compute controller parameters based on type
+Ts = config.Ts;
+if strcmpi(controller_type, 'model_base_ctrl')
+    ControllerType = config.controller_type_enum.MODEL_BASE_CTRL;
+    model_base_ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+    % Compute lambda values for display
+    lambda_f = exp(-fB_f * Ts * 2 * pi);
+    lambda_c = exp(-fB_c * Ts * 2 * pi);
+    lambda_e = exp(-fB_e * Ts * 2 * pi);
+    beta = sqrt(lambda_e * lambda_c);
+else  % 'pi_ctrl'
+    ControllerType = config.controller_type_enum.PI_CTRL;
+    pi_ctrl_params = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
+end
 
 % Output control
 ENABLE_PLOT = true;
@@ -94,6 +102,7 @@ StepTime = step_time;
 % Display configuration
 fprintf('[Workspace Variables]\n');
 fprintf('------------------------\n');
+fprintf('  Controller: %s (ControllerType=%d)\n', controller_type, ControllerType);
 fprintf('  SignalType: %d (%s)\n', SignalType, signal_type_name);
 fprintf('  Channel: %d\n', channel);
 fprintf('  Amplitude: %.3f V\n', amplitude);
@@ -105,11 +114,16 @@ else
     fprintf('  StepTime: %.3f s\n', step_time);
 end
 
-fprintf('  d (preview): %d\n', d);
-fprintf('  fB_f: %d Hz, fB_c: %d Hz, fB_e: %d Hz\n', fB_f, fB_c, fB_e);
-fprintf('  lambda_f: %.6f, lambda_c: %.6f, lambda_e: %.6f\n', ...
-        lambda_f, lambda_c, lambda_e);
-fprintf('  beta: %.6f\n\n', beta);
+if strcmpi(controller_type, 'model_base_ctrl')
+    fprintf('  d (preview): %d\n', d);
+    fprintf('  fB_f: %d Hz, fB_c: %d Hz, fB_e: %d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  lambda_f: %.6f, lambda_c: %.6f, lambda_e: %.6f\n', ...
+            lambda_f, lambda_c, lambda_e);
+    fprintf('  beta: %.6f\n\n', beta);
+else
+    fprintf('  Kp: %.4f, Ki: %.4f\n', Kp_value, Ki_value);
+    fprintf('  zc: %.2f rad/s\n\n', Ki_value / Kp_value);
+end
 
 % Create output directory
 if strcmpi(signal_type_name, 'sine')
@@ -173,10 +187,12 @@ set_param(model_name, 'MaxStep', num2str(Ts/10));
 fprintf('  StopTime: %.4f s, Solver: ode45, MaxStep: %.2e s\n', sim_time, Ts/10);
 
 % Assign variables to base workspace
-assignin('base', 'params', ctrl_params);
-assignin('base', 'Kp_value', Kp_value);
-assignin('base', 'Ki_value', Ki_value);
-assignin('base', 'ControllerType', 1);  % 1=R-Controller
+if strcmpi(controller_type, 'model_base_ctrl')
+    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params);
+else
+    assignin('base', 'pi_ctrl_params', pi_ctrl_params);
+end
+assignin('base', 'ControllerType', ControllerType);
 
 % External vd timeseries (not used for inner loop test)
 vd_timeseries = timeseries(zeros(2, 6), [0; sim_time]);
@@ -546,13 +562,18 @@ fprintf('================================================================\n\n');
 
 fprintf('[Summary]\n');
 fprintf('  Name: %s\n', test_name);
+fprintf('  Controller: %s\n', controller_type);
 fprintf('  Signal: %s, P%d, %.3f V\n', signal_type_name, channel, amplitude);
 
 if strcmpi(signal_type_name, 'sine')
     fprintf('  Frequency: %.1f Hz\n', frequency);
 end
 
-fprintf('  R-Controller: d=%d, fB_c=%d Hz, fB_e=%d Hz\n', d, fB_c, fB_e);
+if strcmpi(controller_type, 'model_base_ctrl')
+    fprintf('  R-Controller: d=%d, fB_c=%d Hz, fB_e=%d Hz\n', d, fB_c, fB_e);
+else
+    fprintf('  PI Controller: Kp=%.4f, Ki=%.4f\n', Kp_value, Ki_value);
+end
 fprintf('  Elapsed time: %.2f s\n\n', elapsed_time);
 
 

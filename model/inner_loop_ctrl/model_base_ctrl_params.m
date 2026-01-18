@@ -15,7 +15,7 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
 % Example:
 %   ctrl_params = model_base_ctrl_params(300, 500, 1000);
 %
-% Note: This function creates 'ParamsBus' in base workspace
+% Note: This function creates 'ModelBaseCtrlParamsBus' in base workspace
 %
 % See also: model_base_ctrl_function, CLAUDE.md
 
@@ -84,8 +84,8 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
 
     %% Create Simulink Bus Object
     % Simulink requires explicit Bus Object definition for structures
-    ParamsBus = Simulink.Bus;
-    ParamsBus.Description = 'R Controller Parameters Structure';
+    ModelBaseCtrlParamsBus = Simulink.Bus;
+    ModelBaseCtrlParamsBus.Description = 'R Controller Parameters Structure';
 
     % Define all bus elements 
     elems(1) = Simulink.BusElement;
@@ -170,15 +170,15 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     elems(20).DataType = 'double';
 
     % Assign elements to bus
-    ParamsBus.Elements = elems;
+    ModelBaseCtrlParamsBus.Elements = elems;
 
-    % Save ParamsBus to base workspace
-    assignin('base', 'ParamsBus', ParamsBus);
+    % Save ModelBaseCtrlParamsBus to base workspace
+    assignin('base', 'ModelBaseCtrlParamsBus', ModelBaseCtrlParamsBus);
 
     %% Wrap as Simulink.Parameter with Bus Type
     params_data = params;  % Keep the raw data
     ctrl_params = Simulink.Parameter(params_data);
-    ctrl_params.DataType = 'Bus: ParamsBus';
+    ctrl_params.DataType = 'Bus: ModelBaseCtrlParamsBus';
     ctrl_params.Description = 'R Controller Parameters';
 
 end
