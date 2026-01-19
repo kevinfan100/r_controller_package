@@ -17,6 +17,8 @@ package_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(package_root, 'model'));
 addpath(fullfile(package_root, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(package_root, 'model', 'flux_allocation'));
+addpath(fullfile(package_root, 'model', 'motion_ctrl'));
+addpath(fullfile(package_root, 'model', 'particle_dynamics'));
 addpath(fullfile(package_root, 'test_script', 'utils'));
 
 %% Configuration
@@ -38,10 +40,18 @@ fB_f = 1000;
 fB_c = 300;
 fB_e = 500;
 
-% Compute controller parameters
-model_base_ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
-b_value = model_base_ctrl_params.Value.b;
-lambda_f = model_base_ctrl_params.Value.lambda_f;
+% PI controller parameters (for backup)
+Kp_value = config.Kp_default;
+Ki_value = config.Ki_default;
+Ts = config.Ts;
+
+% Compute controller parameters (both are needed by Simulink model)
+ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f);
+ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
+
+% Extract values for theory curve calculation
+b_value = ctrl_params_model_base.Value.b;
+lambda_f = ctrl_params_model_base.Value.lambda_f;
 
 % Output settings
 SAVE_RESULTS = true;
@@ -124,20 +134,52 @@ for freq_idx = 1:num_freq
             freq_idx, num_freq, freq, period, sim_time);
     fprintf('--------------------------------------------------------\n');
 
+    % Create vd_signal_params for this frequency
+    vd_sig_params = vd_signal_params( ...
+        'Mode', 1, ...  % Sine mode
+        'Channel', channel, ...
+        'Amplitude', amplitude, ...
+        'Frequency', freq, ...
+        'Phase', 0, ...
+        'StepTime', 0, ...
+        'Ts', Ts, ...
+        'd', d);
+
+    % Create alloc_params (required by Force_Model block)
+    alloc_params_sim = force_model_allocation_params('Simulink', true, ...
+        'pos_m', [0; 0; 0], 'SampleRateMode', 2);
+
     % Assign workspace variables for Simulink
-    assignin('base', 'SignalType', 1);  % Sine mode
-    assignin('base', 'Channel', channel);
-    assignin('base', 'Amplitude', amplitude);
-    assignin('base', 'Frequency', freq);
-    assignin('base', 'Phase', 0);
-    assignin('base', 'StepTime', 0);
-    assignin('base', 'd', d);
-    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params);
+    % Controller parameters (both are needed)
+    assignin('base', 'model_base_ctrl_params', ctrl_params_model_base);
+    assignin('base', 'pi_ctrl_params', ctrl_params_pi);
     assignin('base', 'ControllerType', config.controller_type_enum.MODEL_BASE_CTRL);
 
-    % External vd timeseries (not used for inner loop test)
-    vd_ts = timeseries(zeros(2, 6), [0; sim_time]);
-    assignin('base', 'vd_timeseries', vd_ts);
+    % signal_type: 1=Signal mode (inner loop test)
+    assignin('base', 'signal_type', 1);
+    assignin('base', 'vd_signal_params', vd_sig_params);
+    assignin('base', 'alloc_params', alloc_params_sim);
+
+    % f_d timeseries (required by Force mode, not used here)
+    f_d_timeseries = timeseries(zeros(2, 3), [0; sim_time]);
+    assignin('base', 'f_d_timeseries', f_d_timeseries);
+
+    % Motion Control parameters (required by Simulink model even in Signal mode)
+    motion_ctrl_params = motion_control_law_params('Enable', 0);
+    traj_params = trajectory_generator_params();
+    particle_params = particle_dynamics_params();
+    thermal_params = thermal_force_params('Enable', 0);
+    p0 = [0; 0; 5];
+
+    assignin('base', 'motion_control_law_params', motion_ctrl_params);
+    assignin('base', 'trajectory_generator_params', traj_params);
+    assignin('base', 'particle_dynamics_params', particle_params);
+    assignin('base', 'thermal_force_params', thermal_params);
+    assignin('base', 'p0', p0);
+
+    % pos_m_static timeseries (required by From Workspace blocks)
+    pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
+    assignin('base', 'pos_m_static', pos_m_static);
 
     % Configure Simulink
     set_param(model_name, 'StopTime', num2str(sim_time));

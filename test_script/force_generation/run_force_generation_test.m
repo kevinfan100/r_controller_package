@@ -19,6 +19,9 @@ package_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(package_root, 'model'));
 addpath(fullfile(package_root, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(package_root, 'model', 'flux_allocation'));
+addpath(fullfile(package_root, 'model', 'motion_ctrl'));
+addpath(fullfile(package_root, 'model', 'particle_dynamics'));
+addpath(fullfile(package_root, 'test_script', 'utils'));
 
 
 %%                        SECTION 1: Configuration
@@ -286,6 +289,25 @@ if USE_SIMULINK
     % Legacy parameters (for backward compatibility)
     assignin('base', 'Kp_value', Kp_value);
     assignin('base', 'Ki_value', Ki_value);
+
+    % ─────────────────────────────────────────────────────────────────────
+    % Motion Control parameters (required by Simulink model even in Force mode)
+    % ─────────────────────────────────────────────────────────────────────
+    motion_ctrl_params = motion_control_law_params('Enable', 0);
+    traj_params = trajectory_generator_params();
+    particle_params = particle_dynamics_params();
+    thermal_params = thermal_force_params('Enable', 0);
+    p0 = [0; 0; 5];
+
+    assignin('base', 'motion_control_law_params', motion_ctrl_params);
+    assignin('base', 'trajectory_generator_params', traj_params);
+    assignin('base', 'particle_dynamics_params', particle_params);
+    assignin('base', 'thermal_force_params', thermal_params);
+    assignin('base', 'p0', p0);
+
+    % pos_m_static timeseries (required by From Workspace blocks)
+    pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
+    assignin('base', 'pos_m_static', pos_m_static);
 
     % ─────────────────────────────────────────────────────────────────────
     % Load and run Simulink model

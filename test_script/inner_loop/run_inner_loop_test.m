@@ -15,6 +15,8 @@ package_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(package_root, 'model'));
 addpath(fullfile(package_root, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(package_root, 'model', 'flux_allocation'));
+addpath(fullfile(package_root, 'model', 'motion_ctrl'));
+addpath(fullfile(package_root, 'model', 'particle_dynamics'));
 addpath(fullfile(package_root, 'test_script', 'utils'));
 
 %% Configuration
@@ -23,7 +25,7 @@ test_name = 'test';
 signal_type_name = 'sine';          % 'step' or 'sine'
 
 % Controller type: 'model_base_ctrl' or 'pi_ctrl'
-controller_type = 'model_base_ctrl';
+controller_type = 'pi_ctrl';
 
 % Signal parameters
 d = 0;                              % Preview steps
@@ -51,17 +53,21 @@ Ki_value = config.Ki_default;
 
 % Compute controller parameters based on type
 Ts = config.Ts;
+
+% Always create both controller params (Simulink model needs both)
+ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f);
+ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
+
+% Compute lambda values (used for display and result struct)
+lambda_f = exp(-fB_f * Ts * 2 * pi);
+lambda_c = exp(-fB_c * Ts * 2 * pi);
+lambda_e = exp(-fB_e * Ts * 2 * pi);
+beta = sqrt(lambda_e * lambda_c);
+
 if strcmpi(controller_type, 'model_base_ctrl')
     ControllerType = config.controller_type_enum.MODEL_BASE_CTRL;
-    model_base_ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
-    % Compute lambda values for display
-    lambda_f = exp(-fB_f * Ts * 2 * pi);
-    lambda_c = exp(-fB_c * Ts * 2 * pi);
-    lambda_e = exp(-fB_e * Ts * 2 * pi);
-    beta = sqrt(lambda_e * lambda_c);
 else  % 'pi_ctrl'
     ControllerType = config.controller_type_enum.PI_CTRL;
-    pi_ctrl_params = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
 end
 
 % Output control
@@ -200,12 +206,9 @@ set_param(model_name, 'MaxStep', num2str(Ts/10));
 fprintf('  StopTime: %.4f s, Solver: ode45, MaxStep: %.2e s\n', sim_time, Ts/10);
 
 % Assign variables to base workspace
-% Controller parameters
-if strcmpi(controller_type, 'model_base_ctrl')
-    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params);
-else
-    assignin('base', 'pi_ctrl_params', pi_ctrl_params);
-end
+% Controller parameters (both are always needed by Simulink model)
+assignin('base', 'model_base_ctrl_params', ctrl_params_model_base);
+assignin('base', 'pi_ctrl_params', ctrl_params_pi);
 assignin('base', 'ControllerType', ControllerType);
 
 % New Vd Generator parameters (Bus-based)
@@ -216,6 +219,24 @@ assignin('base', 'alloc_params', alloc_params_sim);
 % f_d timeseries (required by Force mode, but not used in Signal mode)
 f_d_timeseries = timeseries(zeros(2, 3), [0; sim_time]);
 assignin('base', 'f_d_timeseries', f_d_timeseries);
+
+% Motion Control parameters (required by Simulink model even in Signal mode)
+% These are dummy values since signal_type=1 doesn't use Motion Control
+motion_ctrl_params = motion_control_law_params('Enable', 0);
+traj_params = trajectory_generator_params();
+particle_params = particle_dynamics_params();
+thermal_params = thermal_force_params('Enable', 0);
+p0 = [0; 0; 5];  % Default initial position
+
+assignin('base', 'motion_control_law_params', motion_ctrl_params);
+assignin('base', 'trajectory_generator_params', traj_params);
+assignin('base', 'particle_dynamics_params', particle_params);
+assignin('base', 'thermal_force_params', thermal_params);
+assignin('base', 'p0', p0);
+
+% pos_m_static timeseries (required by From Workspace blocks)
+pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
+assignin('base', 'pos_m_static', pos_m_static);
 
 fprintf('  Parameters loaded to workspace\n');
 fprintf('    signal_type=%d, vd_signal_params (Bus), alloc_params (Bus)\n\n', signal_type);
