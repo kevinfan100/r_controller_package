@@ -25,7 +25,7 @@ test_name = 'test';
 signal_type_name = 'sine';          % 'step' or 'sine'
 
 % Controller type: 'model_base_ctrl' or 'pi_ctrl'
-controller_type = 'pi_ctrl';
+controller_type = 'model_base_ctrl';
 
 % Signal parameters
 d = 0;                              % Preview steps
@@ -477,12 +477,12 @@ if ENABLE_PLOT
         % Sine mode tabs
         tab1 = create_vm_vd_plot(tabgroup, v_d_display, v_m_display, ...
                                  channel, amplitude, styles, fft_results);
-        fprintf('  Tab 1: Vm vs Vd\n');
+        fprintf('  ✓ Tab 1: Vm vs Vd\n');
 
         tab2 = create_6ch_time_plot(tabgroup, t_display, v_d_display, v_m_display, ...
                                     channel, frequency, config.display_cycles, styles, ...
                                     '6ch Time Response');
-        fprintf('  Tab 2: 6ch Time Response\n');
+        fprintf('  ✓ Tab 2: 6ch Time Response\n');
 
         % Detail window for u (and u_w1 if model_base_ctrl)
         detail_cycles = 10;
@@ -493,27 +493,27 @@ if ENABLE_PLOT
 
         tab3 = create_control_input_plot(tabgroup, t_detail, u_detail, ...
                                          fB_f, fB_c, fB_e, detail_cycles, styles, ...
-                                         'Control Input (u)');
-        fprintf('  Tab 3: Control Input (u)\n');
+                                         'Control Input (u)', false);
+        fprintf('  ✓ Tab 3: Control Input (u)\n');
 
         % Tab 4: u_w1 Estimation (only for model_base_ctrl)
         if ~isempty(u_w1)
             u_w1_detail = u_w1(idx_detail, :);
             tab4 = create_control_input_plot(tabgroup, t_detail, u_w1_detail, ...
                                              fB_f, fB_c, fB_e, detail_cycles, styles, ...
-                                             'u_w1 Estimation');
-            fprintf('  Tab 4: u_w1 Estimation\n');
+                                             'u_w1 Estimation', true);
+            fprintf('  ✓ Tab 4: u_w1 Estimation\n');
         end
 
         tab5 = create_6ch_time_plot(tabgroup, t, v_d, v_m, ...
                                     channel, frequency, -1, styles, ...
                                     'Vm Full Time');
-        fprintf('  Tab 5: Vm Full Time\n');
+        fprintf('  ✓ Tab 5: Vm Full Time\n');
 
         tab6 = create_control_input_plot(tabgroup, t, u, ...
                                          fB_f, fB_c, fB_e, -1, styles, ...
-                                         'Control Effort Full');
-        fprintf('  Tab 6: Control Effort Full\n');
+                                         'Control Effort Full', false);
+        fprintf('  ✓ Tab 6: Control Effort Full\n');
     else
         % Step mode tabs
         zoom_time = 0.01;
@@ -524,12 +524,12 @@ if ENABLE_PLOT
 
         tab1 = create_step_response_plot(tabgroup, t_zoom, v_d_zoom, v_m_zoom, ...
                                          channel, amplitude, styles);
-        fprintf('  Tab 1: Step Response\n');
+        fprintf('  ✓ Tab 1: Step Response\n');
 
         tab2 = create_6ch_time_plot(tabgroup, t, v_d, v_m, ...
                                     channel, 0, -1, styles, ...
                                     '6ch Time Response');
-        fprintf('  Tab 2: 6ch Time Response\n');
+        fprintf('  ✓ Tab 2: 6ch Time Response\n');
 
         % Steady state data for u (and u_w1 if model_base_ctrl)
         steady_time = 0.1;
@@ -539,27 +539,27 @@ if ENABLE_PLOT
 
         tab3 = create_control_input_plot(tabgroup, t_steady_step - t_steady_step(1), ...
                                          u_steady, fB_f, fB_c, fB_e, -1, styles, ...
-                                         'Control Input (u)');
-        fprintf('  Tab 3: Control Input (u)\n');
+                                         'Control Input (u)', false);
+        fprintf('  ✓ Tab 3: Control Input (u)\n');
 
         % Tab 4: u_w1 Estimation (only for model_base_ctrl)
         if ~isempty(u_w1)
             u_w1_steady = u_w1(idx_steady_step, :);
             tab4 = create_control_input_plot(tabgroup, t_steady_step - t_steady_step(1), ...
                                              u_w1_steady, fB_f, fB_c, fB_e, -1, styles, ...
-                                             'u_w1 Estimation');
-            fprintf('  Tab 4: u_w1 Estimation\n');
+                                             'u_w1 Estimation', true);
+            fprintf('  ✓ Tab 4: u_w1 Estimation\n');
         end
 
         tab5 = create_6ch_time_plot(tabgroup, t, v_d, v_m, ...
                                     channel, 0, -1, styles, ...
                                     'Vm Full Time');
-        fprintf('  Tab 5: Vm Full Time\n');
+        fprintf('  ✓ Tab 5: Vm Full Time\n');
 
         tab6 = create_control_input_plot(tabgroup, t, u, ...
                                          fB_f, fB_c, fB_e, -1, styles, ...
-                                         'Control Effort Full');
-        fprintf('  Tab 6: Control Effort Full\n');
+                                         'Control Effort Full', false);
+        fprintf('  ✓ Tab 6: Control Effort Full\n');
     end
     fprintf('\n');
 end
@@ -779,8 +779,13 @@ function tab = create_6ch_time_plot(tabgroup, t, v_d, v_m, channel, frequency, .
 end
 
 function tab = create_control_input_plot(tabgroup, t, u_data, fB_f, fB_c, fB_e, ...
-                                         detail_cycles, styles, tab_title)
+                                         detail_cycles, styles, tab_title, auto_ylim)
 % Create control input plot (u or u_w1)
+% auto_ylim: if true, automatically adjust ylim for each channel (useful for u_w1)
+    if nargin < 10
+        auto_ylim = false;
+    end
+
     tab = uitab(tabgroup, 'Title', tab_title);
     tl = tiledlayout(tab, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
 
@@ -806,6 +811,16 @@ function tab = create_control_input_plot(tabgroup, t, u_data, fB_f, fB_c, fB_e, 
         title(ax, sprintf('P%d', ch), 'FontSize', styles.title_fontsize-2, 'FontWeight', 'bold');
         ax.LineWidth = styles.axis_linewidth;
         ax.FontSize = styles.tick_fontsize;
+
+        % Auto-adjust ylim for better visualization (especially for u_w1)
+        if auto_ylim
+            y_data = u_data(:, ch);
+            y_min = min(y_data);
+            y_max = max(y_data);
+            if y_max ~= y_min
+                ylim(ax, [y_min * 1.05, y_max * 1.05]);
+            end
+        end
     end
 end
 
