@@ -56,7 +56,8 @@ function [is_safe, h_min_actual, t_critical] = check_trajectory_safety_function(
     % Calculate h along trajectory
     h = zeros(1, N);
     for i = 1:N
-        p_d = trajectory_generator_function(t_check(i), p0, traj_params);
+        % trajectory_generator_function now requires particle_params as 4th arg
+        p_d = trajectory_generator_function(t_check(i), p0, traj_params, particle_params);
         h(i) = dot(p_d, w_hat) - pz;
     end
 

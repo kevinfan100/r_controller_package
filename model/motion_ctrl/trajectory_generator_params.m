@@ -12,12 +12,13 @@ function trajectory_generator_params = trajectory_generator_params(varargin)
 %       Returns Simulink.Parameter with custom values
 %
 % Parameters (Name-Value pairs):
-%   'Type'       - 0=z_sine, 1=xy_circle (default: 0)
+%   'Type'       - 0=z_sine, 1=xy_circle, 2=positioning (default: 0)
 %   'Amplitude'  - z_sine amplitude [um] (default: 5)
 %   'Frequency'  - z_sine frequency [Hz] (default: 1)
 %   'Radius'     - xy_circle radius [um] (default: 5)
 %   'Period'     - xy_circle period [s] (default: 1)
 %   'NCycles'    - Number of cycles (default: 3)
+%   'HoldTime'   - positioning hold time [s] (default: 3)
 %
 % Output:
 %   trajectory_generator_params - Simulink.Parameter with TrajectoryGeneratorParamsBus
@@ -27,13 +28,19 @@ function trajectory_generator_params = trajectory_generator_params(varargin)
 %   function name = variable name = Bus base name
 %
 % Trajectory Definitions (Measuring Coordinate):
-%   z_sine:
-%     p_d = p0 + amplitude * sin(2*pi*frequency*t) * [0;0;1]
+%   z_sine (type=0):
+%     p_d = p0 + amplitude * sin(2*pi*frequency*t) * w_hat
 %     Duration: n_cycles / frequency
+%     Note: w_hat is wall normal from particle_params
 %
-%   xy_circle:
+%   xy_circle (type=1):
 %     p_d = p0 + radius*(cos(omega*t)-1)*[1;0;0] + radius*sin(omega*t)*[0;1;0]
 %     Duration: period * n_cycles
+%
+%   positioning (type=2):
+%     p_d = p0 (constant)
+%     Duration: hold_time
+%     Use case: Test disturbance rejection (thermal force)
 %
 % Example:
 %   % Z-axis sine wave
@@ -42,16 +49,20 @@ function trajectory_generator_params = trajectory_generator_params(varargin)
 %   % XY circle
 %   params = trajectory_generator_params('Type', 1, 'Radius', 3, 'Period', 2);
 %
+%   % Positioning (hold position)
+%   params = trajectory_generator_params('Type', 2, 'HoldTime', 5);
+%
 % See also: trajectory_generator_function, motion_control_law_params, CLAUDE.md
 
     %% Parse Input Parameters
     p = inputParser;
-    addParameter(p, 'Type', 0, @(x) ismember(x, [0, 1]));
+    addParameter(p, 'Type', 0, @(x) ismember(x, [0, 1, 2]));
     addParameter(p, 'Amplitude', 5, @(x) x > 0);
     addParameter(p, 'Frequency', 1, @(x) x > 0);
     addParameter(p, 'Radius', 5, @(x) x > 0);
     addParameter(p, 'Period', 1, @(x) x > 0);
     addParameter(p, 'NCycles', 3, @(x) x > 0);
+    addParameter(p, 'HoldTime', 3, @(x) x > 0);
     parse(p, varargin{:});
 
     %% Build Parameter Structure
@@ -61,12 +72,13 @@ function trajectory_generator_params = trajectory_generator_params(varargin)
     params.radius = p.Results.Radius;
     params.period = p.Results.Period;
     params.n_cycles = p.Results.NCycles;
+    params.hold_time = p.Results.HoldTime;
 
     %% Create Bus Object (TrajectoryGeneratorParamsBus)
     TrajectoryGeneratorParamsBus = Simulink.Bus;
     TrajectoryGeneratorParamsBus.Description = 'Trajectory Generator Parameters';
 
-    elem_names = {'type', 'amplitude', 'frequency', 'radius', 'period', 'n_cycles'};
+    elem_names = {'type', 'amplitude', 'frequency', 'radius', 'period', 'n_cycles', 'hold_time'};
 
     elems = Simulink.BusElement.empty(0, length(elem_names));
     for i = 1:length(elem_names)

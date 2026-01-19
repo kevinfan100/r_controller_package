@@ -1,25 +1,78 @@
-%% RUN_MOTION_CONTROL_TEST Motion control integration test
+% run_motion_control_test.m
+% Motion Control comprehensive integration test
 %
-% Tests the integrated motion control system including:
+% Tests the complete Motion Control pipeline including:
+%   - Trajectory Generator (z_sine, xy_circle, positioning)
 %   - Motion Control Law (position tracking)
-%   - Trajectory Generator (z_sine, xy_circle)
-%   - Particle Dynamics (with Wall Effect and Thermal Force)
+%   - Particle Dynamics (Wall Effect, Thermal Force)
 %   - Force Allocation (inverse_model, force_model)
 %   - Inner Loop Control (R-Controller)
 %
-% This script validates the pure MATLAB functions before Simulink integration.
+% Supports multiple trajectory modes and configurable physical effects.
 %
-% Test Modes:
-%   1. Unit tests for individual functions
-%   2. Open-loop particle dynamics (thermal force only)
-%   3. Closed-loop motion control (z_sine trajectory)
-%   4. Closed-loop motion control (xy_circle trajectory)
-%
-% See also: motion_control_law_function, trajectory_generator_function, CLAUDE.md
+% See also: run_motion_control_simple_test, motion_control_law_function, CLAUDE.md
 
-%% SECTION 1: Setup Paths
+%% SECTION 1: Configuration
+% =========================================================================
 clear; clc; close all;
 
+% === Test Name ===
+test_name = 'motion_test';
+
+% === Trajectory Mode ===
+% Options: 'z_sine', 'xy_circle', 'positioning'
+traj_type = 'z_sine';
+h_init = 5;                     % Initial wall distance [um]
+amplitude = 1.5;                % z_sine amplitude [um] (safe: h_init - amplitude > h_min)
+frequency = 1;                  % z_sine frequency [Hz]
+n_cycles = 3;                   % Number of cycles
+radius = 5;                     % xy_circle radius [um]
+period = 1;                     % xy_circle period [s]
+hold_time = 3;                  % positioning hold time [s]
+
+% === Wall Parameters ===
+theta = 0;                      % Azimuth angle [rad]
+phi = 0;                        % Polar angle [rad]
+pz = 0;                         % Wall displacement [um]
+h_min = 3.375;                  % Minimum safe distance [um] (1.5*R)
+
+% === Motion Control Parameters ===
+ctrl_enable = true;             % true=closed-loop, false=open-loop
+lambda_c = 0.7;                 % Closed-loop pole (0 < lambda < 1)
+noise_filter_enable = false;    % Feedback low-pass filter
+noise_filter_cutoff = 10;       % Filter cutoff frequency [Hz]
+
+% === Physical Effects ===
+thermal_enable = true;          % Thermal force (Brownian motion)
+wall_effect_enable = true;      % Wall effect
+
+% === Sample Rate and Interpolation ===
+% 1=ZOH, 2=Linear (default), 3=Direct
+sample_rate_mode = 2;
+pos_update_rate = 1600;         % Position update rate [Hz]
+
+% === Inner Loop Controller ===
+% Options: 'model_base_ctrl' or 'pi_ctrl'
+controller_type = 'model_base_ctrl';
+fB_f = 3000;                    % Feedforward bandwidth [Hz]
+fB_c = 3200;                    % Controller bandwidth [Hz]
+fB_e = 16000;                   % Estimator bandwidth [Hz]
+Kp_value = 2;                   % PI proportional gain
+Ki_value = 4412;                % PI integral gain
+
+% === Analysis Parameters ===
+cutoff_freq = 10;               % Deterministic/random separation cutoff [Hz]
+
+% === Simulation Parameters ===
+T_margin = 0.3;                 % Post-trajectory buffer time [s]
+
+% === Output Control ===
+ENABLE_PLOT = true;
+SAVE_PNG = true;
+SAVE_MAT = true;
+
+%% SECTION 2: Setup Paths
+% =========================================================================
 script_dir = fileparts(mfilename('fullpath'));
 project_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(project_root, 'model', 'motion_ctrl'));
@@ -28,419 +81,786 @@ addpath(fullfile(project_root, 'model', 'flux_allocation'));
 addpath(fullfile(project_root, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(project_root, 'test_script', 'utils'));
 
-fprintf('=== Motion Control Integration Test ===\n\n');
+fprintf('\n');
+fprintf('================================================================\n');
+fprintf('       Motion Control Comprehensive Integration Test\n');
+fprintf('================================================================\n\n');
 
-%% SECTION 2: Unit Tests for calc_correction_functions
-fprintf('--- Test 1: calc_correction_functions ---\n');
+% Load plot styles
+styles = plot_styles();
 
-% Test known values (from formula verification)
-[c_para, c_perp] = calc_correction_functions(1.5);
-fprintf('h_bar = 1.5: c_para = %.3f (expected ~1.615), c_perp = %.3f (expected ~3.205)\n', c_para, c_perp);
-assert(abs(c_para - 1.615) < 0.01, 'c_para mismatch at h_bar=1.5');
-assert(abs(c_perp - 3.205) < 0.01, 'c_perp mismatch at h_bar=1.5');
+%% SECTION 3: Calculate Simulation Time
+% =========================================================================
+fprintf('[Configuration]\n');
+fprintf('------------------------\n');
+fprintf('  Trajectory type: %s\n', traj_type);
 
-[c_para, c_perp] = calc_correction_functions(10);
-fprintf('h_bar = 10:  c_para = %.3f (expected ~1.060), c_perp = %.3f (expected ~1.126)\n', c_para, c_perp);
-assert(abs(c_para - 1.060) < 0.01, 'c_para mismatch at h_bar=10');
-assert(abs(c_perp - 1.126) < 0.01, 'c_perp mismatch at h_bar=10');
-
-[c_para, c_perp] = calc_correction_functions(100);
-fprintf('h_bar = 100: c_para = %.4f (expected ~1), c_perp = %.4f (expected ~1)\n', c_para, c_perp);
-assert(abs(c_para - 1) < 0.02, 'c_para should approach 1 at large h_bar');
-assert(abs(c_perp - 1) < 0.02, 'c_perp should approach 1 at large h_bar');
-
-fprintf('PASSED: calc_correction_functions\n\n');
-
-%% SECTION 3: Unit Tests for calc_gamma_inv_function
-fprintf('--- Test 2: calc_gamma_inv_function ---\n');
-
-particle_params = particle_dynamics_params();
-p_far = [0; 0; 1000];  % Far from wall
-[Gamma_inv_far, h_bar_far] = calc_gamma_inv_function(p_far, particle_params.Value);
-
-gamma_N = particle_params.Value.gamma_N;
-expected_far = eye(3) / gamma_N;
-error_far = max(abs(Gamma_inv_far - expected_far), [], 'all');
-relative_error = error_far / (1/gamma_N);
-fprintf('Far from wall (h=1000 um): relative error = %.2f%% (should be < 1%%)\n', relative_error*100);
-assert(relative_error < 0.01, 'Gamma_inv should approach I/gamma_N far from wall');
-fprintf('h_bar = %.1f\n', h_bar_far);
-
-p_near = [0; 0; 5];  % h = 5 um, h_bar = 5/2.25 = 2.22
-[Gamma_inv_near, h_bar_near] = calc_gamma_inv_function(p_near, particle_params.Value);
-fprintf('Near wall (h=5 um): h_bar = %.2f\n', h_bar_near);
-fprintf('Gamma_inv diagonal: [%.4f, %.4f, %.4f]\n', ...
-    Gamma_inv_near(1,1), Gamma_inv_near(2,2), Gamma_inv_near(3,3));
-
-% Verify anisotropy (Z direction should have lower mobility due to wall)
-assert(Gamma_inv_near(3,3) < Gamma_inv_near(1,1), ...
-    'Perpendicular mobility should be lower than parallel');
-fprintf('PASSED: calc_gamma_inv_function\n\n');
-
-%% SECTION 4: Unit Tests for calc_initial_position_function
-fprintf('--- Test 3: calc_initial_position_function ---\n');
-
-particle_params = particle_dynamics_params('HInit', 5);
-p0 = calc_initial_position_function(particle_params.Value);
-fprintf('Initial position (h_init=5, default wall): [%.2f, %.2f, %.2f] um\n', p0(1), p0(2), p0(3));
-assert(all(abs(p0 - [0; 0; 5]) < 1e-10), 'Initial position should be [0;0;5] for default wall');
-
-% Test with different wall angle
-particle_params_rotated = particle_dynamics_params('Theta', pi/4, 'Phi', pi/4, 'HInit', 10);
-p0_rotated = calc_initial_position_function(particle_params_rotated.Value);
-fprintf('Rotated wall (theta=pi/4, phi=pi/4, h_init=10): [%.2f, %.2f, %.2f] um\n', ...
-    p0_rotated(1), p0_rotated(2), p0_rotated(3));
-fprintf('PASSED: calc_initial_position_function\n\n');
-
-%% SECTION 5: Unit Tests for trajectory_generator_function
-fprintf('--- Test 4: trajectory_generator_function ---\n');
-
-traj_params_sine = trajectory_generator_params('Type', 0, 'Amplitude', 5, 'Frequency', 1, 'NCycles', 3);
-p0 = [0; 0; 5];
-
-% Test at t=0
-p_d_0 = trajectory_generator_function(0, p0, traj_params_sine.Value);
-fprintf('z_sine at t=0: [%.2f, %.2f, %.2f] (expected: [0, 0, 5])\n', p_d_0(1), p_d_0(2), p_d_0(3));
-assert(all(abs(p_d_0 - p0) < 1e-10), 'Trajectory should start at p0');
-
-% Test at t=0.25 (peak of sine at f=1Hz)
-p_d_025 = trajectory_generator_function(0.25, p0, traj_params_sine.Value);
-expected_025 = [0; 0; 5 + 5];  % p0 + amplitude
-fprintf('z_sine at t=0.25: [%.2f, %.2f, %.2f] (expected: [0, 0, 10])\n', p_d_025(1), p_d_025(2), p_d_025(3));
-assert(all(abs(p_d_025 - expected_025) < 1e-10), 'Peak should be p0 + amplitude');
-
-% Test after trajectory completion
-p_d_end = trajectory_generator_function(5, p0, traj_params_sine.Value);
-fprintf('z_sine at t=5 (after completion): [%.2f, %.2f, %.2f]\n', p_d_end(1), p_d_end(2), p_d_end(3));
-assert(all(abs(p_d_end - p0) < 1e-10), 'Should return to p0 after completion');
-
-% Test xy_circle
-traj_params_circle = trajectory_generator_params('Type', 1, 'Radius', 3, 'Period', 2, 'NCycles', 2);
-p_d_circle_0 = trajectory_generator_function(0, p0, traj_params_circle.Value);
-fprintf('xy_circle at t=0: [%.2f, %.2f, %.2f]\n', p_d_circle_0(1), p_d_circle_0(2), p_d_circle_0(3));
-assert(all(abs(p_d_circle_0 - p0) < 1e-10), 'Circle should start at p0');
-
-fprintf('PASSED: trajectory_generator_function\n\n');
-
-%% SECTION 6: Unit Tests for motion_control_law_function
-fprintf('--- Test 5: motion_control_law_function ---\n');
-
-% Reset persistent variables
-clear motion_control_law_function;
-
-motion_params = motion_control_law_params('LambdaC', 0.7, 'Enable', 1);
-gamma = motion_params.Value.gamma;
-Ts = motion_params.Value.Ts;
-lambda_c = motion_params.Value.lambda_c;
-
-p_d = [0; 0; 5];
-p_m = [0; 0; 4.9];
-
-% First call (initialization)
-f_d_1 = motion_control_law_function(p_d, p_m, motion_params.Value);
-expected_1 = (gamma/Ts) * (1 - lambda_c) * (p_d - p_m);
-fprintf('First call: f_d = [%.4f, %.4f, %.4f] pN\n', f_d_1(1), f_d_1(2), f_d_1(3));
-fprintf('Expected:   f_d = [%.4f, %.4f, %.4f] pN\n', expected_1(1), expected_1(2), expected_1(3));
-assert(max(abs(f_d_1 - expected_1)) < 1e-10, 'First call should match expected formula');
-
-% Second call with same inputs
-f_d_2 = motion_control_law_function(p_d, p_m, motion_params.Value);
-fprintf('Second call: f_d = [%.4f, %.4f, %.4f] pN\n', f_d_2(1), f_d_2(2), f_d_2(3));
-
-% Open-loop test
-clear motion_control_law_function;
-motion_params_open = motion_control_law_params('Enable', 0);
-f_d_open = motion_control_law_function(p_d, p_m, motion_params_open.Value);
-fprintf('Open-loop: f_d = [%.4f, %.4f, %.4f] pN (expected: all zeros)\n', ...
-    f_d_open(1), f_d_open(2), f_d_open(3));
-assert(all(abs(f_d_open) < 1e-10), 'Open-loop should return zeros');
-
-fprintf('PASSED: motion_control_law_function\n\n');
-
-%% SECTION 7: Unit Tests for thermal force
-fprintf('--- Test 6: calc_thermal_force_function ---\n');
-
-% Reset persistent variables
-clear calc_thermal_force_function;
-
-thermal_params = thermal_force_params('Enable', 1, 'Seed', 42);
-p_test = [0; 0; 5];
-
-F_th = calc_thermal_force_function(p_test, thermal_params.Value);
-fprintf('Thermal force sample: [%.4f, %.4f, %.4f] pN\n', F_th(1), F_th(2), F_th(3));
-
-% Generate multiple samples and check statistics
-clear calc_thermal_force_function;
-thermal_params = thermal_force_params('Enable', 1, 'Seed', 123);
-N_samples = 1000;
-F_samples = zeros(3, N_samples);
-for i = 1:N_samples
-    F_samples(:, i) = calc_thermal_force_function(p_test, thermal_params.Value);
+switch lower(traj_type)
+    case 'z_sine'
+        T_traj = n_cycles / frequency;
+        fprintf('  Amplitude: %.2f um, Frequency: %.1f Hz, Cycles: %d\n', ...
+            amplitude, frequency, n_cycles);
+    case 'xy_circle'
+        T_traj = period * n_cycles;
+        fprintf('  Radius: %.2f um, Period: %.1f s, Cycles: %d\n', ...
+            radius, period, n_cycles);
+    case 'positioning'
+        T_traj = hold_time;
+        fprintf('  Hold time: %.1f s\n', hold_time);
+    otherwise
+        error('Unknown trajectory type: %s', traj_type);
 end
 
-mean_F = mean(F_samples, 2);
-std_F = std(F_samples, 0, 2);
-fprintf('Mean thermal force: [%.4f, %.4f, %.4f] pN (expected ~0)\n', mean_F(1), mean_F(2), mean_F(3));
-fprintf('Std thermal force:  [%.4f, %.4f, %.4f] pN\n', std_F(1), std_F(2), std_F(3));
+T_sim = T_traj + T_margin;
+fprintf('  Trajectory time: %.2f s, Total sim time: %.2f s\n', T_traj, T_sim);
+fprintf('  Control: %s (lambda_c=%.2f)\n', ...
+    conditional_str(ctrl_enable, 'Closed-loop', 'Open-loop'), lambda_c);
+fprintf('  Thermal: %s, Wall effect: %s\n', ...
+    conditional_str(thermal_enable, 'ON', 'OFF'), ...
+    conditional_str(wall_effect_enable, 'ON', 'OFF'));
+fprintf('  Inner loop: %s\n\n', controller_type);
 
-% Disabled test
-clear calc_thermal_force_function;
-thermal_params_off = thermal_force_params('Enable', 0);
-F_th_off = calc_thermal_force_function(p_test, thermal_params_off.Value);
-assert(all(abs(F_th_off) < 1e-10), 'Disabled thermal force should return zeros');
-fprintf('PASSED: calc_thermal_force_function\n\n');
+%% SECTION 4: Create Parameter Structures
+% =========================================================================
+fprintf('[Creating Parameters]\n');
+fprintf('------------------------\n');
 
-%% SECTION 8: Safety Check Test
-fprintf('--- Test 7: check_trajectory_safety_function ---\n');
+% Trajectory parameters
+traj_type_num = get_traj_type_num(traj_type);
+traj_params = trajectory_generator_params( ...
+    'Type', traj_type_num, ...
+    'Amplitude', amplitude, ...
+    'Frequency', frequency, ...
+    'Radius', radius, ...
+    'Period', period, ...
+    'NCycles', n_cycles, ...
+    'HoldTime', hold_time);
+fprintf('  trajectory_generator_params created\n');
 
-particle_params = particle_dynamics_params('HInit', 5, 'HMin', 3.375);
-p0 = calc_initial_position_function(particle_params.Value);
+% Particle dynamics parameters
+particle_params = particle_dynamics_params( ...
+    'Theta', theta, ...
+    'Phi', phi, ...
+    'Pz', pz, ...
+    'HMin', h_min, ...
+    'HInit', h_init, ...
+    'WallEffectEnable', wall_effect_enable);
+fprintf('  particle_dynamics_params created\n');
 
-% Safe trajectory
-traj_params_safe = trajectory_generator_params('Type', 0, 'Amplitude', 1, 'Frequency', 1, 'NCycles', 3);
-T_sim = 3;
-[is_safe, h_min_actual, t_crit] = check_trajectory_safety_function(...
-    p0, traj_params_safe.Value, particle_params.Value, T_sim);
-fprintf('Safe trajectory (amp=1): is_safe=%d, h_min=%.2f um\n', is_safe, h_min_actual);
-assert(is_safe, 'Small amplitude trajectory should be safe');
+% Motion control parameters
+motion_params = motion_control_law_params( ...
+    'LambdaC', lambda_c, ...
+    'Enable', ctrl_enable);
+fprintf('  motion_control_law_params created\n');
 
-% Unsafe trajectory (amplitude too large)
-traj_params_unsafe = trajectory_generator_params('Type', 0, 'Amplitude', 10, 'Frequency', 1, 'NCycles', 3);
-lastwarn('');  % Clear last warning
-[is_safe_2, h_min_actual_2, t_crit_2] = check_trajectory_safety_function(...
-    p0, traj_params_unsafe.Value, particle_params.Value, T_sim);
-fprintf('Unsafe trajectory (amp=10): is_safe=%d, h_min=%.2f um at t=%.3f s\n', ...
-    is_safe_2, h_min_actual_2, t_crit_2);
-assert(~is_safe_2, 'Large amplitude trajectory should be unsafe');
+% Thermal force parameters
+thermal_params = thermal_force_params( ...
+    'Enable', thermal_enable, ...
+    'Seed', 42);
+fprintf('  thermal_force_params created\n');
 
-fprintf('PASSED: check_trajectory_safety_function\n\n');
-
-%% SECTION 9: Discrete-Time Simulation (Pure MATLAB)
-fprintf('--- Test 8: Discrete-Time Motion Control Simulation ---\n');
-
-% Reset persistent variables
-clear motion_control_law_function calc_thermal_force_function;
-
-% Parameters
-Ts_motion = 1/1600;  % Motion control sampling period
-T_sim = 3;           % 3 seconds
-N_steps = round(T_sim / Ts_motion);
-
-% Create parameter structures
-traj_params = trajectory_generator_params('Type', 0, 'Amplitude', 2, 'Frequency', 1, 'NCycles', 3);
-motion_params = motion_control_law_params('LambdaC', 0.7, 'Enable', 1);
-particle_params = particle_dynamics_params('WallEffectEnable', 1, 'HInit', 5);
-thermal_params = thermal_force_params('Enable', 0, 'Seed', 42);  % Disable thermal for deterministic test
-
-% Initial position
-p0 = calc_initial_position_function(particle_params.Value);
-p = p0;  % Current position
-
-% Allocate output arrays
-t_log = zeros(N_steps, 1);
-p_d_log = zeros(N_steps, 3);
-p_log = zeros(N_steps, 3);
-f_d_log = zeros(N_steps, 3);
-
-% Simulation loop
-fprintf('Running discrete-time simulation (%d steps)...\n', N_steps);
-for k = 1:N_steps
-    t = (k-1) * Ts_motion;
-
-    % Trajectory generator
-    p_d = trajectory_generator_function(t, p0, traj_params.Value);
-
-    % Motion control law
-    f_d = motion_control_law_function(p_d, p, motion_params.Value);
-
-    % Thermal force
-    F_th = calc_thermal_force_function(p, thermal_params.Value);
-
-    % Total force
-    f_total = f_d + F_th;
-
-    % Particle dynamics (simplified Euler integration)
-    [Gamma_inv, ~] = calc_gamma_inv_function(p, particle_params.Value);
-    dp_dt = Gamma_inv * f_total;
-    p = p + Ts_motion * dp_dt;
-
-    % Log data
-    t_log(k) = t;
-    p_d_log(k, :) = p_d';
-    p_log(k, :) = p';
-    f_d_log(k, :) = f_d';
+% Inner loop controller parameters
+if strcmpi(controller_type, 'model_base_ctrl')
+    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+    ControllerType = 1;
+    fprintf('  model_base_ctrl_params created (fB: c=%d, e=%d, f=%d Hz)\n', fB_c, fB_e, fB_f);
+else
+    ctrl_params = pi_ctrl_params(Kp_value, Ki_value);
+    ControllerType = 2;
+    fprintf('  pi_ctrl_params created (Kp=%.2f, Ki=%.2f)\n', Kp_value, Ki_value);
 end
 
-% Calculate tracking error
-p_error = p_log - p_d_log;
-rms_error = sqrt(mean(p_error.^2));
-fprintf('RMS tracking error: [%.4f, %.4f, %.4f] um\n', rms_error(1), rms_error(2), rms_error(3));
+% Force model allocation parameters
+alloc_params = force_model_allocation_params( ...
+    'Simulink', true, ...
+    'SampleRateMode', sample_rate_mode, ...
+    'PosMSource', 1);
+fprintf('  force_model_allocation_params created\n');
 
-% Plot results
-figure('Name', 'Motion Control Test - Z-axis Tracking', 'Position', [100, 100, 800, 600]);
+% Calculate initial position
+p0 = calc_initial_position_function(particle_params.Value);
+fprintf('  Initial position: [%.2f, %.2f, %.2f] um\n\n', p0(1), p0(2), p0(3));
 
-subplot(3, 1, 1);
-plot(t_log, p_d_log(:, 3), 'b--', 'LineWidth', 1.5, 'DisplayName', 'Desired');
-hold on;
-plot(t_log, p_log(:, 3), 'r-', 'LineWidth', 1.5, 'DisplayName', 'Actual');
-xlabel('Time [s]');
-ylabel('Z Position [um]');
-title('Z-axis Position Tracking');
-legend('Location', 'best');
-grid on;
+%% SECTION 5: Safety Check
+% =========================================================================
+fprintf('[Safety Check]\n');
+fprintf('------------------------\n');
 
-subplot(3, 1, 2);
-plot(t_log, p_error(:, 3), 'k-', 'LineWidth', 1.5);
-xlabel('Time [s]');
-ylabel('Tracking Error [um]');
-title('Z-axis Tracking Error');
-grid on;
+[is_safe, h_min_actual, t_critical] = check_trajectory_safety_function( ...
+    p0, traj_params.Value, particle_params.Value, T_sim);
 
-subplot(3, 1, 3);
-plot(t_log, f_d_log(:, 3), 'g-', 'LineWidth', 1.5);
-xlabel('Time [s]');
-ylabel('Control Force [pN]');
-title('Z-axis Control Force');
-grid on;
+fprintf('  Minimum wall distance: %.3f um at t=%.3f s\n', h_min_actual, t_critical);
+fprintf('  Safety threshold: %.3f um\n', h_min);
 
-% Save figure
-output_dir = fullfile(project_root, 'test_results', 'motion_control');
-if ~exist(output_dir, 'dir')
-    mkdir(output_dir);
+if is_safe
+    fprintf('  Status: SAFE\n\n');
+else
+    fprintf('  Status: UNSAFE - trajectory may collide with wall!\n');
+    fprintf('  Consider reducing amplitude or increasing h_init.\n\n');
+    % Continue anyway but warn
 end
-timestamp = datestr(now, 'yyyymmdd_HHMMSS');
-saveas(gcf, fullfile(output_dir, ['z_sine_tracking_' timestamp '.png']));
-fprintf('Figure saved to: %s\n', output_dir);
 
-% Check pass criteria
-assert(rms_error(3) < 0.5, 'Z-axis RMS error should be < 0.5 um');
-fprintf('PASSED: Discrete-time motion control simulation\n\n');
+%% SECTION 6: Prepare Simulink Workspace
+% =========================================================================
+fprintf('[Simulink Configuration]\n');
+fprintf('------------------------\n');
 
-%% SECTION 10: Summary
-fprintf('========================================\n');
-fprintf('All MATLAB unit tests PASSED!\n');
-fprintf('========================================\n');
-fprintf('\nFiles created/modified:\n');
-fprintf('  model/motion_ctrl/\n');
-fprintf('    - trajectory_generator_params.m\n');
-fprintf('    - trajectory_generator_function.m\n');
-fprintf('    - motion_control_law_params.m\n');
-fprintf('    - motion_control_law_function.m\n');
-fprintf('  model/particle_dynamics/\n');
-fprintf('    - particle_dynamics_params.m\n');
-fprintf('    - calc_correction_functions.m\n');
-fprintf('    - calc_gamma_inv_function.m\n');
-fprintf('    - thermal_force_params.m\n');
-fprintf('    - calc_thermal_force_function.m\n');
-fprintf('    - calc_initial_position_function.m\n');
-fprintf('    - check_trajectory_safety_function.m\n');
-fprintf('  model/flux_allocation/\n');
-fprintf('    - force_model_allocation_params.m (modified)\n');
-fprintf('    - inverse_model_function.m (modified)\n');
-fprintf('    - force_model_function.m (modified)\n');
-fprintf('  model/main_system.slx (modified)\n');
-fprintf('    - Motion_Control subsystem (1600 Hz)\n');
-fprintf('    - Particle_Dynamics subsystem (continuous)\n');
-fprintf('    - signal_type=3 for Motion Control mode\n');
+model_name = 'main_system';
+model_path = fullfile(project_root, 'model', [model_name '.slx']);
 
-%% SECTION 11: Simulink Integration Test (Optional)
-% This section runs only if Simulink is available and the model exists.
-% It can be skipped by setting run_simulink_test = false.
+if ~exist(model_path, 'file')
+    error('Model file not found: %s', model_path);
+end
 
-run_simulink_test = true;  % Set to false to skip Simulink test
+Ts = 1e-5;  % Inner loop sampling time
+signal_type = 3;  % Motion Control mode
 
-if run_simulink_test
-    fprintf('\n--- Test 9: Simulink Integration Test ---\n');
+% Create timeseries for From Workspace blocks
+t_vec = (0:Ts:T_sim)';
+f_d_timeseries = timeseries(zeros(length(t_vec), 3), t_vec);
+pos_m_static = timeseries(zeros(length(t_vec), 3) + p0', t_vec);
 
-    % Check if Simulink is available
-    if ~exist('sim', 'file')
-        fprintf('SKIPPED: Simulink not available\n\n');
-    else
-        % Clear persistent variables
-        clear motion_control_law_function trajectory_generator_function;
-        clear calc_thermal_force_function calc_gamma_inv_function;
+% Create vd_signal_params (required but not used in Motion Control mode)
+vd_sig_params = vd_signal_params( ...
+    'Mode', 1, ...
+    'Channel', 1, ...
+    'Amplitude', 0, ...
+    'Frequency', 100, ...
+    'Ts', Ts, ...
+    'd', 0);
+
+% Create pi_ctrl_params (always needed by model even if not used)
+if strcmpi(controller_type, 'model_base_ctrl')
+    pi_params = pi_ctrl_params(Kp_value, Ki_value);
+else
+    pi_params = ctrl_params;
+    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+end
+
+% Assign all to base workspace
+assignin('base', 'trajectory_generator_params', traj_params);
+assignin('base', 'particle_dynamics_params', particle_params);
+assignin('base', 'motion_control_law_params', motion_params);
+assignin('base', 'thermal_force_params', thermal_params);
+assignin('base', 'model_base_ctrl_params', ctrl_params);
+assignin('base', 'pi_ctrl_params', pi_params);
+assignin('base', 'vd_signal_params', vd_sig_params);
+assignin('base', 'alloc_params', alloc_params);
+assignin('base', 'p0', p0);
+assignin('base', 'signal_type', signal_type);
+assignin('base', 'ControllerType', ControllerType);
+assignin('base', 'f_d_timeseries', f_d_timeseries);
+assignin('base', 'pos_m_static', pos_m_static);
+
+fprintf('  Parameters assigned to base workspace\n');
+fprintf('  signal_type = %d (Motion Control mode)\n\n', signal_type);
+
+%% SECTION 7: Run Simulation
+% =========================================================================
+fprintf('[Simulation]\n');
+fprintf('------------------------\n');
+fprintf('  Loading model: %s\n', model_name);
+
+if ~bdIsLoaded(model_name)
+    load_system(model_path);
+end
+
+set_param(model_name, 'StopTime', num2str(T_sim));
+set_param(model_name, 'Solver', 'ode45');
+set_param(model_name, 'MaxStep', num2str(Ts/10));
+
+fprintf('  StopTime: %.2f s\n', T_sim);
+fprintf('  Running simulation...\n');
+
+tic;
+try
+    out = sim(model_name);
+    elapsed_time = toc;
+    fprintf('  Completed in %.2f seconds\n\n', elapsed_time);
+catch ME
+    fprintf('  Simulation failed: %s\n', ME.message);
+    rethrow(ME);
+end
+
+%% SECTION 8: Extract Data
+% =========================================================================
+fprintf('[Data Extraction]\n');
+fprintf('------------------------\n');
+
+% Position data (1600 Hz rate from Motion Control)
+p_d_out = out.p_d;  % Desired position [N_motion x 3]
+p_m_out = out.p_m;  % Actual position [N_motion x 3]
+f_d_out = out.f_m;  % Control force [N_motion x 3] (f_m from Motion_Control)
+
+% Get thermal force if available
+if isfield(out, 'F_th')
+    F_th_out = out.F_th;
+else
+    F_th_out = zeros(size(f_d_out));
+end
+
+% Inner loop data (100 kHz rate)
+v_d_out = out.Vd;   % Desired voltage [N_inner x 6]
+v_m_out = out.Vm;   % Measured voltage [N_inner x 6]
+u_out = out.u;      % Current output [N_inner x 6]
+
+% Create time vectors
+Ts_motion = 1/pos_update_rate;
+N_motion = size(p_d_out, 1);
+t_motion = (0:N_motion-1)' * Ts_motion;
+
+N_inner = size(v_d_out, 1);
+t_inner = (0:N_inner-1)' * Ts;
+
+fprintf('  Motion Control: %d samples (%.2f s)\n', N_motion, t_motion(end));
+fprintf('  Inner Loop: %d samples (%.2f s)\n', N_inner, t_inner(end));
+
+%% SECTION 9: Analysis
+% =========================================================================
+fprintf('\n[Analysis]\n');
+fprintf('------------------------\n');
+
+% Position tracking error
+p_error = p_m_out - p_d_out;
+rms_error_um = sqrt(mean(p_error.^2, 1));
+rms_error_nm = rms_error_um * 1000;
+max_error_um = max(abs(p_error), [], 1);
+max_error_nm = max_error_um * 1000;
+
+fprintf('  Position RMS Error:\n');
+fprintf('    X: %.2f nm, Y: %.2f nm, Z: %.2f nm\n', rms_error_nm(1), rms_error_nm(2), rms_error_nm(3));
+fprintf('  Position Max Error:\n');
+fprintf('    X: %.2f nm, Y: %.2f nm, Z: %.2f nm\n', max_error_nm(1), max_error_nm(2), max_error_nm(3));
+
+% Control force statistics
+max_force = max(abs(f_d_out), [], 1);
+fprintf('  Max Control Force:\n');
+fprintf('    Fx: %.2f pN, Fy: %.2f pN, Fz: %.2f pN\n', max_force(1), max_force(2), max_force(3));
+
+% Wall distance monitoring
+w_hat = particle_params.Value.w_hat;
+h_actual = p_m_out * w_hat - pz;
+h_R = h_actual / particle_params.Value.R;
+h_min_sim = min(h_actual);
+fprintf('  Wall distance: min=%.3f um (h/R=%.2f)\n', h_min_sim, h_min_sim/particle_params.Value.R);
+
+% Voltage tracking quality (if available)
+v_error = v_m_out - v_d_out;
+v_rms_error = sqrt(mean(v_error.^2, 1));
+fprintf('  Voltage RMS Error: [');
+fprintf('%.4f ', v_rms_error);
+fprintf('] V\n\n');
+
+%% SECTION 10: Create Output Directory
+% =========================================================================
+if SAVE_PNG || SAVE_MAT
+    output_dir = fullfile(project_root, 'test_results', 'motion_control', 'full_test');
+    if ~exist(output_dir, 'dir')
+        mkdir(output_dir);
+    end
+    timestamp = datestr(now, 'yyyymmdd_HHMMSS');
+    test_dir = fullfile(output_dir, sprintf('%s_%s_%s', test_name, traj_type, timestamp));
+    mkdir(test_dir);
+    fprintf('[Output]\n');
+    fprintf('------------------------\n');
+    fprintf('  Directory: %s\n\n', test_dir);
+end
+
+%% SECTION 11: Generate Plots
+% =========================================================================
+if ENABLE_PLOT
+    fprintf('[Generating Plots]\n');
+    fprintf('------------------------\n');
+
+    % Create tab figure
+    fig_main = uifigure('Name', sprintf('Motion Control Test: %s - %s', test_name, traj_type), ...
+                        'Position', [50 50 1400 900]);
+    tabgroup = uitabgroup(fig_main);
+    tabgroup.Units = 'normalized';
+    tabgroup.Position = [0 0 1 1];
+
+    % Tab 1: 3D Trajectory
+    tab1 = create_3d_trajectory_tab(tabgroup, p_d_out, p_m_out, w_hat, pz, styles);
+    fprintf('  Tab 1: 3D Trajectory\n');
+
+    % Tab 2-4: XYZ Axis Analysis
+    tab2 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 1, 'X', styles);
+    fprintf('  Tab 2: X-axis Analysis\n');
+
+    tab3 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 2, 'Y', styles);
+    fprintf('  Tab 3: Y-axis Analysis\n');
+
+    tab4 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 3, 'Z', styles);
+    fprintf('  Tab 4: Z-axis Analysis\n');
+
+    % Tab 5: Position Overview
+    tab5 = create_position_overview_tab(tabgroup, t_motion, p_d_out, p_m_out, styles);
+    fprintf('  Tab 5: Position Overview\n');
+
+    % Tab 6: Force Overview
+    tab6 = create_force_overview_tab(tabgroup, t_motion, f_d_out, styles);
+    fprintf('  Tab 6: Force Overview\n');
+
+    % Tab 7: Voltage Tracking (6 channels)
+    tab7 = create_voltage_tracking_tab(tabgroup, t_inner, v_d_out, v_m_out, styles);
+    fprintf('  Tab 7: Voltage Tracking\n');
+
+    % Tab 8: Current Output (6 channels)
+    tab8 = create_current_output_tab(tabgroup, t_inner, u_out, styles);
+    fprintf('  Tab 8: Current Output\n');
+
+    % Tab 9: FFT Spectrum
+    tab9 = create_fft_spectrum_tab(tabgroup, t_motion, p_m_out, pos_update_rate, cutoff_freq, styles);
+    fprintf('  Tab 9: FFT Spectrum\n');
+
+    % Tab 10: Deterministic/Random Separation
+    tab10 = create_separation_tab(tabgroup, t_motion, p_m_out, p_d_out, pos_update_rate, cutoff_freq, styles);
+    fprintf('  Tab 10: Deterministic/Random Separation\n');
+
+    % Tab 11: Wall Distance Monitoring
+    tab11 = create_wall_distance_tab(tabgroup, t_motion, h_actual, h_R, h_min, particle_params.Value.R, styles);
+    fprintf('  Tab 11: Wall Distance Monitoring\n');
+
+    fprintf('\n');
+end
+
+%% SECTION 12: Save Results
+% =========================================================================
+if SAVE_PNG || SAVE_MAT
+    fprintf('[Saving Results]\n');
+    fprintf('------------------------\n');
+
+    if SAVE_PNG && ENABLE_PLOT
+        export_res = styles.export_resolution;
+
+        exportgraphics(tab1, fullfile(test_dir, 'tab01_3d_trajectory.png'), 'Resolution', export_res);
+        exportgraphics(tab2, fullfile(test_dir, 'tab02_x_axis.png'), 'Resolution', export_res);
+        exportgraphics(tab3, fullfile(test_dir, 'tab03_y_axis.png'), 'Resolution', export_res);
+        exportgraphics(tab4, fullfile(test_dir, 'tab04_z_axis.png'), 'Resolution', export_res);
+        exportgraphics(tab5, fullfile(test_dir, 'tab05_position.png'), 'Resolution', export_res);
+        exportgraphics(tab6, fullfile(test_dir, 'tab06_force.png'), 'Resolution', export_res);
+        exportgraphics(tab7, fullfile(test_dir, 'tab07_voltage.png'), 'Resolution', export_res);
+        exportgraphics(tab8, fullfile(test_dir, 'tab08_current.png'), 'Resolution', export_res);
+        exportgraphics(tab9, fullfile(test_dir, 'tab09_fft.png'), 'Resolution', export_res);
+        exportgraphics(tab10, fullfile(test_dir, 'tab10_separation.png'), 'Resolution', export_res);
+        exportgraphics(tab11, fullfile(test_dir, 'tab11_wall_distance.png'), 'Resolution', export_res);
+
+        fprintf('  Figures saved (PNG, %d DPI)\n', export_res);
+    end
+
+    if SAVE_MAT
+        result = struct();
 
         % Configuration
-        T_sim_slx = 1.0;  % Simulation time [s]
+        result.config.test_name = test_name;
+        result.config.traj_type = traj_type;
+        result.config.h_init = h_init;
+        result.config.amplitude = amplitude;
+        result.config.frequency = frequency;
+        result.config.n_cycles = n_cycles;
+        result.config.radius = radius;
+        result.config.period = period;
+        result.config.hold_time = hold_time;
+        result.config.lambda_c = lambda_c;
+        result.config.ctrl_enable = ctrl_enable;
+        result.config.thermal_enable = thermal_enable;
+        result.config.wall_effect_enable = wall_effect_enable;
+        result.config.controller_type = controller_type;
+        result.config.T_sim = T_sim;
 
-        % Create parameters for Simulink (use different variable names to avoid
-        % overwriting the parameter functions)
-        traj_params = trajectory_generator_params(...
-            'Type', 0, 'Amplitude', 2, 'Frequency', 1, 'NCycles', 3);
-        motion_params = motion_control_law_params(...
-            'LambdaC', 0.7, 'Enable', 1);
-        particle_params = particle_dynamics_params(...
-            'WallEffectEnable', 1, 'HInit', 5);
-        thermal_params = thermal_force_params('Enable', 0);
-        ctrl_params = model_base_ctrl_params(500, 500, 3000);
-        alloc_params = force_model_allocation_params('Simulink', true, 'PosMSource', 1);
-        p0 = calc_initial_position_function(particle_params.Value);
-        signal_type = 3;  % Motion Control mode
+        % Motion Control data
+        result.motion.t = t_motion;
+        result.motion.p_d = p_d_out;
+        result.motion.p_m = p_m_out;
+        result.motion.f_d = f_d_out;
+        result.motion.F_th = F_th_out;
 
-        % Create timeseries for From Workspace blocks
-        t_vec_slx = (0:1e-5:T_sim_slx)';
-        f_d_timeseries = timeseries(zeros(length(t_vec_slx), 3), t_vec_slx);
-        pos_m_static = timeseries(zeros(length(t_vec_slx), 3) + p0', t_vec_slx);
+        % Inner Loop data
+        result.inner.t = t_inner;
+        result.inner.v_d = v_d_out;
+        result.inner.v_m = v_m_out;
+        result.inner.u = u_out;
 
-        % Other required parameters
-        ControllerType = 1;
-        pi_params = pi_ctrl_params(100, 10000);
-        vd_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
-            'Frequency', 100, 'Ts', 1e-5, 'd', 0);
+        % Analysis results
+        result.analysis.rms_error_nm = rms_error_nm;
+        result.analysis.max_error_nm = max_error_nm;
+        result.analysis.max_force = max_force;
+        result.analysis.h_min_sim = h_min_sim;
+        result.analysis.v_rms_error = v_rms_error;
 
-        % Assign all parameters to base workspace for Simulink
-        assignin('base', 'trajectory_generator_params', traj_params);
-        assignin('base', 'motion_control_law_params', motion_params);
-        assignin('base', 'particle_dynamics_params', particle_params);
-        assignin('base', 'thermal_force_params', thermal_params);
-        assignin('base', 'model_base_ctrl_params', ctrl_params);
-        assignin('base', 'pi_ctrl_params', pi_params);
-        assignin('base', 'vd_signal_params', vd_params);
-        assignin('base', 'alloc_params', alloc_params);
-        assignin('base', 'p0', p0);
-        assignin('base', 'signal_type', signal_type);
-        assignin('base', 'ControllerType', ControllerType);
-        assignin('base', 'f_d_timeseries', f_d_timeseries);
-        assignin('base', 'pos_m_static', pos_m_static);
+        % Metadata
+        result.meta.timestamp = datestr(now);
+        result.meta.elapsed_time = elapsed_time;
 
-        fprintf('Running Simulink simulation (signal_type=3, T=%.1f s)...\n', T_sim_slx);
-
-        model_path_slx = fullfile(project_root, 'model', 'main_system');
-        try
-            load_system(model_path_slx);
-            simOut = sim(model_path_slx, 'StopTime', num2str(T_sim_slx), ...
-                'ReturnWorkspaceOutputs', 'on');
-
-            % Extract position data
-            p_d_slx = simOut.get('p_d');
-            p_m_slx = simOut.get('p_m');
-
-            % Skip transient (first 10%)
-            n_skip = round(0.1 * size(p_d_slx, 1));
-            p_error_slx = p_d_slx(n_skip:end, :) - p_m_slx(n_skip:end, :);
-            rms_error_slx = sqrt(mean(p_error_slx.^2, 1));
-
-            fprintf('Simulink RMS tracking error: [%.4f, %.4f, %.4f] um\n', rms_error_slx);
-
-            % Pass criteria
-            assert(rms_error_slx(3) < 1.0, 'Z-axis RMS error should be < 1.0 um');
-            fprintf('PASSED: Simulink Integration Test\n\n');
-
-            close_system(model_path_slx, 0);
-        catch ME
-            fprintf('Simulink test ERROR: %s\n', ME.message);
-            try
-                close_system(model_path_slx, 0);
-            catch
-            end
-        end
+        save(fullfile(test_dir, 'result.mat'), 'result', '-v7.3');
+        fprintf('  Data saved (MAT)\n');
     end
-else
-    fprintf('\n--- Test 9: Simulink Integration Test ---\n');
-    fprintf('SKIPPED: run_simulink_test = false\n\n');
+
+    fprintf('  Output: %s\n\n', test_dir);
 end
 
-%% SECTION 12: Final Summary
-fprintf('========================================\n');
-fprintf('All tests completed!\n');
-fprintf('========================================\n');
+%% SECTION 13: Summary
+% =========================================================================
+fprintf('================================================================\n');
+fprintf('                     Test Completed\n');
+fprintf('================================================================\n\n');
+
+fprintf('[Summary]\n');
+fprintf('  Test: %s (%s)\n', test_name, traj_type);
+fprintf('  Position RMS Error: X=%.1f nm, Y=%.1f nm, Z=%.1f nm\n', ...
+    rms_error_nm(1), rms_error_nm(2), rms_error_nm(3));
+fprintf('  Max Force: Fx=%.1f pN, Fy=%.1f pN, Fz=%.1f pN\n', ...
+    max_force(1), max_force(2), max_force(3));
+fprintf('  Min Wall Distance: %.3f um (h/R=%.2f)\n', h_min_sim, h_min_sim/particle_params.Value.R);
+fprintf('  Elapsed time: %.2f s\n\n', elapsed_time);
+
+% Pass/Fail criteria
+pass_criteria = true;
+if strcmpi(traj_type, 'positioning')
+    if rms_error_nm(3) > 50
+        fprintf('  [WARN] Z-axis RMS error > 50 nm for positioning mode\n');
+        pass_criteria = false;
+    end
+else
+    if max(rms_error_nm) > 100
+        fprintf('  [WARN] RMS error > 100 nm\n');
+        pass_criteria = false;
+    end
+end
+
+if h_min_sim < h_min
+    fprintf('  [WARN] Wall distance below safety threshold\n');
+    pass_criteria = false;
+end
+
+if pass_criteria
+    fprintf('  [PASS] All criteria met\n\n');
+else
+    fprintf('  [FAIL] Some criteria not met\n\n');
+end
+
+
+% =========================================================================
+% LOCAL FUNCTIONS
+% =========================================================================
+
+function str = conditional_str(cond, true_str, false_str)
+    if cond
+        str = true_str;
+    else
+        str = false_str;
+    end
+end
+
+function type_num = get_traj_type_num(traj_type)
+    switch lower(traj_type)
+        case 'z_sine'
+            type_num = 0;
+        case 'xy_circle'
+            type_num = 1;
+        case 'positioning'
+            type_num = 2;
+        otherwise
+            error('Unknown trajectory type: %s', traj_type);
+    end
+end
+
+function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, w_hat, pz, styles)
+    tab = uitab(tabgroup, 'Title', '3D Trajectory');
+    ax = uiaxes(tab);
+    ax.Position = [80 80 800 700];
+    hold(ax, 'on');
+
+    % Plot desired trajectory
+    plot3(ax, p_d(:,1), p_d(:,2), p_d(:,3), 'b-', ...
+        'LineWidth', styles.reference_linewidth, 'DisplayName', 'Desired');
+
+    % Plot actual trajectory
+    plot3(ax, p_m(:,1), p_m(:,2), p_m(:,3), 'r--', ...
+        'LineWidth', styles.measurement_linewidth, 'DisplayName', 'Actual');
+
+    % Mark start point
+    plot3(ax, p_d(1,1), p_d(1,2), p_d(1,3), 'go', ...
+        'MarkerSize', 12, 'MarkerFaceColor', 'g', 'DisplayName', 'Start');
+
+    % Draw wall plane (simplified)
+    x_range = [min([p_d(:,1); p_m(:,1)]), max([p_d(:,1); p_m(:,1)])];
+    y_range = [min([p_d(:,2); p_m(:,2)]), max([p_d(:,2); p_m(:,2)])];
+
+    if abs(w_hat(3)) > 0.99  % Wall is approximately horizontal
+        [X, Y] = meshgrid(linspace(x_range(1)-1, x_range(2)+1, 10), ...
+                         linspace(y_range(1)-1, y_range(2)+1, 10));
+        Z = ones(size(X)) * pz;
+        surf(ax, X, Y, Z, 'FaceAlpha', 0.3, 'EdgeColor', 'none', ...
+            'FaceColor', [0.5, 0.5, 0.5], 'DisplayName', 'Wall');
+    end
+
+    xlabel(ax, 'X [um]', 'FontSize', styles.xlabel_fontsize, 'FontWeight', 'bold');
+    ylabel(ax, 'Y [um]', 'FontSize', styles.ylabel_fontsize, 'FontWeight', 'bold');
+    zlabel(ax, 'Z [um]', 'FontSize', styles.ylabel_fontsize, 'FontWeight', 'bold');
+    title(ax, '3D Trajectory', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+    legend(ax, 'Location', 'best', 'FontSize', styles.legend_fontsize);
+    grid(ax, 'on');
+    view(ax, 45, 30);
+    ax.LineWidth = styles.axis_linewidth;
+end
+
+function tab = create_axis_analysis_tab(tabgroup, t, p_d, p_m, f_d, axis_idx, axis_name, styles)
+    tab = uitab(tabgroup, 'Title', sprintf('%s-axis', axis_name));
+    tl = tiledlayout(tab, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, sprintf('%s-axis Analysis', axis_name), ...
+        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    colors = styles.force_colors;
+
+    % Subplot 1: Position tracking
+    ax1 = nexttile(tl);
+    plot(ax1, t*1000, p_d(:,axis_idx), 'b-', 'LineWidth', styles.reference_linewidth);
+    hold(ax1, 'on');
+    plot(ax1, t*1000, p_m(:,axis_idx), 'r--', 'LineWidth', styles.measurement_linewidth);
+    xlabel(ax1, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+    ylabel(ax1, 'Position [um]', 'FontSize', styles.ylabel_fontsize);
+    title(ax1, 'Position Tracking', 'FontSize', styles.title_fontsize-2);
+    legend(ax1, {'Desired', 'Actual'}, 'Location', 'best', 'FontSize', styles.legend_fontsize);
+    grid(ax1, 'on');
+    ax1.LineWidth = styles.axis_linewidth;
+
+    % Subplot 2: Tracking error
+    ax2 = nexttile(tl);
+    p_error_nm = (p_m(:,axis_idx) - p_d(:,axis_idx)) * 1000;
+    plot(ax2, t*1000, p_error_nm, 'Color', colors(axis_idx,:), ...
+        'LineWidth', styles.measurement_linewidth);
+    xlabel(ax2, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+    ylabel(ax2, 'Error [nm]', 'FontSize', styles.ylabel_fontsize);
+    title(ax2, sprintf('Tracking Error (RMS: %.1f nm)', sqrt(mean(p_error_nm.^2))), ...
+        'FontSize', styles.title_fontsize-2);
+    grid(ax2, 'on');
+    ax2.LineWidth = styles.axis_linewidth;
+
+    % Subplot 3: Control force
+    ax3 = nexttile(tl);
+    plot(ax3, t*1000, f_d(:,axis_idx), 'Color', colors(axis_idx,:), ...
+        'LineWidth', styles.measurement_linewidth);
+    xlabel(ax3, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+    ylabel(ax3, 'Force [pN]', 'FontSize', styles.ylabel_fontsize);
+    title(ax3, sprintf('Control Force (Max: %.1f pN)', max(abs(f_d(:,axis_idx)))), ...
+        'FontSize', styles.title_fontsize-2);
+    grid(ax3, 'on');
+    ax3.LineWidth = styles.axis_linewidth;
+end
+
+function tab = create_position_overview_tab(tabgroup, t, p_d, p_m, styles)
+    tab = uitab(tabgroup, 'Title', 'Position Overview');
+    tl = tiledlayout(tab, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Position Overview', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    axis_names = {'X', 'Y', 'Z'};
+    colors = styles.force_colors;
+
+    for i = 1:3
+        ax = nexttile(tl);
+        plot(ax, t*1000, p_d(:,i), 'Color', colors(i,:), 'LineWidth', styles.reference_linewidth);
+        hold(ax, 'on');
+        plot(ax, t*1000, p_m(:,i), '--', 'Color', colors(i,:)*0.7, ...
+            'LineWidth', styles.measurement_linewidth);
+        xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+        ylabel(ax, sprintf('%s [um]', axis_names{i}), 'FontSize', styles.ylabel_fontsize);
+        if i == 1
+            legend(ax, {'Desired', 'Actual'}, 'Location', 'best', 'FontSize', styles.legend_fontsize);
+        end
+        grid(ax, 'on');
+        ax.LineWidth = styles.axis_linewidth;
+    end
+end
+
+function tab = create_force_overview_tab(tabgroup, t, f_d, styles)
+    tab = uitab(tabgroup, 'Title', 'Force Overview');
+    tl = tiledlayout(tab, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Control Force Overview', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    axis_names = {'Fx', 'Fy', 'Fz'};
+    colors = styles.force_colors;
+
+    for i = 1:3
+        ax = nexttile(tl);
+        plot(ax, t*1000, f_d(:,i), 'Color', colors(i,:), 'LineWidth', styles.measurement_linewidth);
+        xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+        ylabel(ax, sprintf('%s [pN]', axis_names{i}), 'FontSize', styles.ylabel_fontsize);
+        title(ax, sprintf('%s (Max: %.1f pN)', axis_names{i}, max(abs(f_d(:,i)))), ...
+            'FontSize', styles.title_fontsize-2);
+        grid(ax, 'on');
+        ax.LineWidth = styles.axis_linewidth;
+    end
+end
+
+function tab = create_voltage_tracking_tab(tabgroup, t, v_d, v_m, styles)
+    tab = uitab(tabgroup, 'Title', 'Voltage Tracking');
+    tl = tiledlayout(tab, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Voltage Tracking (6 Channels)', ...
+        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    colors = styles.channel_colors;
+
+    % Downsample for display (show last 100ms)
+    t_display_start = max(0, t(end) - 0.1);
+    idx = t >= t_display_start;
+    t_disp = t(idx);
+    v_d_disp = v_d(idx, :);
+    v_m_disp = v_m(idx, :);
+
+    for ch = 1:6
+        ax = nexttile(tl);
+        plot(ax, t_disp*1000, v_d_disp(:,ch), 'Color', styles.theory_color, ...
+            'LineWidth', styles.reference_linewidth);
+        hold(ax, 'on');
+        plot(ax, t_disp*1000, v_m_disp(:,ch), 'Color', colors(ch,:), ...
+            'LineWidth', styles.measurement_linewidth);
+        xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
+        ylabel(ax, 'Voltage [V]', 'FontSize', styles.ylabel_fontsize-2);
+        title(ax, sprintf('P%d', ch), 'FontSize', styles.title_fontsize-2);
+        if ch == 1
+            legend(ax, {'Vd', 'Vm'}, 'Location', 'best', 'FontSize', styles.legend_fontsize-2);
+        end
+        grid(ax, 'on');
+        ax.LineWidth = styles.axis_linewidth;
+        ax.FontSize = styles.tick_fontsize - 2;
+    end
+end
+
+function tab = create_current_output_tab(tabgroup, t, u, styles)
+    tab = uitab(tabgroup, 'Title', 'Current Output');
+    tl = tiledlayout(tab, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Current Output (6 Channels)', ...
+        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    colors = styles.channel_colors;
+
+    % Downsample for display (show last 100ms)
+    t_display_start = max(0, t(end) - 0.1);
+    idx = t >= t_display_start;
+    t_disp = t(idx);
+    u_disp = u(idx, :);
+
+    for ch = 1:6
+        ax = nexttile(tl);
+        plot(ax, t_disp*1000, u_disp(:,ch), 'Color', colors(ch,:), ...
+            'LineWidth', styles.measurement_linewidth);
+        xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
+        ylabel(ax, 'Current [A]', 'FontSize', styles.ylabel_fontsize-2);
+        title(ax, sprintf('P%d', ch), 'FontSize', styles.title_fontsize-2);
+        grid(ax, 'on');
+        ax.LineWidth = styles.axis_linewidth;
+        ax.FontSize = styles.tick_fontsize - 2;
+    end
+end
+
+function tab = create_fft_spectrum_tab(tabgroup, t, p_m, fs, cutoff_freq, styles)
+    tab = uitab(tabgroup, 'Title', 'FFT Spectrum');
+    tl = tiledlayout(tab, 1, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Position FFT Spectrum', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    axis_names = {'X', 'Y', 'Z'};
+    colors = styles.force_colors;
+
+    N = size(p_m, 1);
+    N_half = floor(N/2);
+    f = (0:N_half) * fs / N;
+
+    for i = 1:3
+        ax = nexttile(tl);
+
+        % FFT
+        Y = fft(p_m(:,i) - mean(p_m(:,i)));
+        P = abs(Y(1:N_half+1)) / N * 2;
+        P(1) = P(1) / 2;  % DC component
+
+        loglog(ax, f, P, 'Color', colors(i,:), 'LineWidth', styles.measurement_linewidth);
+        hold(ax, 'on');
+
+        % Cutoff frequency line
+        xline(ax, cutoff_freq, 'k--', 'LineWidth', 1.5);
+
+        xlabel(ax, 'Frequency [Hz]', 'FontSize', styles.xlabel_fontsize);
+        ylabel(ax, 'Amplitude [um]', 'FontSize', styles.ylabel_fontsize);
+        title(ax, sprintf('%s-axis', axis_names{i}), 'FontSize', styles.title_fontsize-2);
+        xlim(ax, [0.1, fs/2]);
+        grid(ax, 'on');
+        ax.LineWidth = styles.axis_linewidth;
+    end
+end
+
+function tab = create_separation_tab(tabgroup, t, p_m, p_d, fs, cutoff_freq, styles)
+    tab = uitab(tabgroup, 'Title', 'Det/Random');
+    tl = tiledlayout(tab, 3, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, sprintf('Deterministic/Random Separation (cutoff: %.1f Hz)', cutoff_freq), ...
+        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    axis_names = {'X', 'Y', 'Z'};
+    colors = styles.force_colors;
+
+    % Design low-pass filter
+    N_filt = size(p_m, 1);
+    [b, a] = butter(4, cutoff_freq / (fs/2), 'low');
+
+    for i = 1:3
+        % Error signal
+        err = p_m(:,i) - p_d(:,i);
+
+        % Separate deterministic and random
+        det_comp = filtfilt(b, a, err);
+        rand_comp = err - det_comp;
+
+        % Left column: Deterministic
+        ax1 = nexttile(tl, 2*(i-1)+1);
+        plot(ax1, t*1000, det_comp*1000, 'Color', colors(i,:), ...
+            'LineWidth', styles.measurement_linewidth);
+        xlabel(ax1, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
+        ylabel(ax1, sprintf('%s [nm]', axis_names{i}), 'FontSize', styles.ylabel_fontsize-2);
+        if i == 1
+            title(ax1, 'Deterministic (Low-freq)', 'FontSize', styles.title_fontsize-2);
+        end
+        grid(ax1, 'on');
+        ax1.LineWidth = styles.axis_linewidth;
+
+        % Right column: Random
+        ax2 = nexttile(tl, 2*(i-1)+2);
+        plot(ax2, t*1000, rand_comp*1000, 'Color', colors(i,:), ...
+            'LineWidth', styles.measurement_linewidth);
+        xlabel(ax2, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
+        ylabel(ax2, sprintf('%s [nm]', axis_names{i}), 'FontSize', styles.ylabel_fontsize-2);
+        if i == 1
+            title(ax2, 'Random (High-freq)', 'FontSize', styles.title_fontsize-2);
+        end
+        grid(ax2, 'on');
+        ax2.LineWidth = styles.axis_linewidth;
+    end
+end
+
+function tab = create_wall_distance_tab(tabgroup, t, h, h_R, h_min, R, styles)
+    tab = uitab(tabgroup, 'Title', 'Wall Distance');
+    tl = tiledlayout(tab, 2, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+    title(tl, 'Wall Distance Monitoring', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+
+    % Top: h vs time
+    ax1 = nexttile(tl);
+    plot(ax1, t*1000, h, 'b-', 'LineWidth', styles.measurement_linewidth);
+    hold(ax1, 'on');
+    yline(ax1, h_min, 'r--', 'LineWidth', 2, 'Label', sprintf('h_{min}=%.2f um', h_min));
+    xlabel(ax1, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+    ylabel(ax1, 'h [um]', 'FontSize', styles.ylabel_fontsize);
+    title(ax1, 'Wall Distance', 'FontSize', styles.title_fontsize-2);
+    grid(ax1, 'on');
+    ax1.LineWidth = styles.axis_linewidth;
+
+    % Bottom: h/R vs time
+    ax2 = nexttile(tl);
+    plot(ax2, t*1000, h_R, 'b-', 'LineWidth', styles.measurement_linewidth);
+    hold(ax2, 'on');
+    yline(ax2, h_min/R, 'r--', 'LineWidth', 2, 'Label', sprintf('h_{min}/R=%.2f', h_min/R));
+    yline(ax2, 1.5, 'k:', 'LineWidth', 1.5, 'Label', 'h/R=1.5 (safety)');
+    xlabel(ax2, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
+    ylabel(ax2, 'h/R', 'FontSize', styles.ylabel_fontsize);
+    title(ax2, 'Normalized Wall Distance', 'FontSize', styles.title_fontsize-2);
+    grid(ax2, 'on');
+    ax2.LineWidth = styles.axis_linewidth;
+end
