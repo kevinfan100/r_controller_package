@@ -405,6 +405,7 @@ if run_simulink_test
         assignin('base', 'vd_signal_params', vd_params);
         assignin('base', 'alloc_params', alloc_params);
         assignin('base', 'p0', p0);
+        assignin('base', 'delay_steps', 0);  % No delay for simple test
         assignin('base', 'signal_type', signal_type);
         assignin('base', 'ControllerType', ControllerType);
         assignin('base', 'f_d_timeseries', f_d_timeseries);

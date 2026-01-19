@@ -31,7 +31,7 @@ controller_type = 'pi_ctrl';
 d = 0;                              % Preview steps
 channel = 1;                        % Excitation channel (1-6)
 amplitude = 2;                      % Amplitude [V]
-frequency = 200;                    % Sine frequency [Hz]
+frequency = 10;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
@@ -43,7 +43,7 @@ config = test_config('Type', 'inner_loop');
 styles = plot_styles();
 
 % R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
-fB_f = 1000;
+fB_f = 0;
 fB_c = 300;
 fB_e = 500;
 
@@ -233,6 +233,7 @@ assignin('base', 'trajectory_generator_params', traj_params);
 assignin('base', 'particle_dynamics_params', particle_params);
 assignin('base', 'thermal_force_params', thermal_params);
 assignin('base', 'p0', p0);
+assignin('base', 'delay_steps', 0);  % No delay for inner loop test
 
 % pos_m_static timeseries (required by From Workspace blocks)
 pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);

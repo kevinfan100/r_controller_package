@@ -304,6 +304,7 @@ if USE_SIMULINK
     assignin('base', 'particle_dynamics_params', particle_params);
     assignin('base', 'thermal_force_params', thermal_params);
     assignin('base', 'p0', p0);
+    assignin('base', 'delay_steps', 0);  % No delay for force generation test
 
     % pos_m_static timeseries (required by From Workspace blocks)
     pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
