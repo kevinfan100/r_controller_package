@@ -39,7 +39,7 @@ h_min = 1.1 * 2.25;                  % Minimum safe distance [um]
 % === Motion Control Parameters ===
 ctrl_enable = true;             % true=closed-loop, false=open-loop
 lambda_c = 0.7;                 % Closed-loop pole (0 < lambda < 1)
-delay_comp_enable = false;       % d=2
+delay_comp_enable = true;       % d=2
 noise_filter_enable = false;    % Feedback low-pass filter
 noise_filter_cutoff = 10;       % Filter cutoff frequency [Hz]
 
@@ -63,7 +63,7 @@ pos_update_rate = 1600;         % Position update rate [Hz]
 
 % === Inner Loop Controller ===
 % Options: 'model_base_ctrl' or 'pi_ctrl'
-controller_type = 'pi_ctrl';
+controller_type = 'model_base_ctrl';
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
 fB_e = 16000;                   % Estimator bandwidth [Hz]
