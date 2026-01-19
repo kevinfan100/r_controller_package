@@ -656,9 +656,31 @@ if ENABLE_PLOT
 
         % Handle timeseries or array format
         if isa(u_ts, 'timeseries')
-            u_data = u_ts.Data;
+            u_data_raw = u_ts.Data;
+            t_u = u_ts.Time;
         else
-            u_data = u_ts;
+            u_data_raw = u_ts;
+            t_u = (0:size(u_data_raw, 1)-1)' * Ts;
+        end
+
+        % Ensure u_data_raw has 6 columns (handle different output formats)
+        num_cols = size(u_data_raw, 2);
+        if num_cols < 6
+            fprintf('  Warning: u_data has %d columns (expected 6), padding with zeros\n', num_cols);
+            u_data_padded = zeros(size(u_data_raw, 1), 6);
+            u_data_padded(:, 1:num_cols) = u_data_raw;
+            u_data_raw = u_data_padded;
+        end
+
+        % Resample u_data to match t if needed
+        N_u = size(u_data_raw, 1);
+        if N_u ~= N
+            u_data = zeros(N, 6);
+            for ch = 1:6
+                u_data(:, ch) = interp1(t_u, u_data_raw(:, ch), t, 'linear', 'extrap');
+            end
+        else
+            u_data = u_data_raw;
         end
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');

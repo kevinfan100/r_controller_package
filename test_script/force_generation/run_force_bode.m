@@ -31,6 +31,9 @@ package_root = fullfile(script_dir, '..', '..');
 addpath(fullfile(package_root, 'model'));
 addpath(fullfile(package_root, 'model', 'inner_loop_ctrl'));
 addpath(fullfile(package_root, 'model', 'flux_allocation'));
+addpath(fullfile(package_root, 'model', 'motion_ctrl'));
+addpath(fullfile(package_root, 'model', 'particle_dynamics'));
+addpath(fullfile(package_root, 'test_script', 'utils'));
 
 % -------------------------------------------------------------------------
 % 1.1 Controller Selection
@@ -176,10 +179,15 @@ else
 end
 
 % Load system parameters (for inverse_model / force_model)
-inv_params = system_params();
+% Use offline mode (no Simulink) for manual inverse_model calls
+inv_params = force_model_allocation_params();
 
-% Load R-Controller parameters
-ctrl_params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
+% For Simulink integration with Force mode
+alloc_params_sim = force_model_allocation_params('Simulink', true, ...
+    'pos_m', bead_position, 'SampleRateMode', 2);  % Linear interpolation
+
+% Load R-Controller parameters (new API)
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f);
 
 % Set force direction vector based on axis selection
 switch upper(force_axis)
@@ -319,107 +327,94 @@ for freq_idx = 1:num_freq
     fprintf('--------------------------------------------------------\n');
 
     % ---------------------------------------------------------------------
-    % 3.1 Define Time Axes (Hardware Constraint Mode)
+    % 3.1 Define Time Axis
     % ---------------------------------------------------------------------
-    % Two time axes: 100 kHz (controller) and pos_update_rate Hz (position)
-    Ts_ctrl = Ts;                           % 100 kHz (R-Controller)
-    Ts_pos  = 1 / pos_update_rate;          % 1600 Hz (Position update)
+    % Generate time axis at 100 kHz (controller rate)
+    N = round(sim_time / Ts) + 1;
+    t = (0:N-1)' * Ts;
 
-    N_ctrl = round(sim_time / Ts_ctrl) + 1;
-    N_pos  = round(sim_time / Ts_pos) + 1;
-
-    t_ctrl = (0:N_ctrl-1)' * Ts_ctrl;       % 100 kHz time axis
-    t_pos  = (0:N_pos-1)' * Ts_pos;         % 1600 Hz time axis
-
-    % Main time axis for analysis
-    t = t_ctrl;
-    N = N_ctrl;
-
-    % ---------------------------------------------------------------------
-    % 3.2 Generate f_d at Position Update Rate (1600 Hz)
-    % ---------------------------------------------------------------------
-    % f_d_low: N_pos x 3 matrix [Fx, Fy, Fz] at 1600 Hz
-    f_d_low = force_amplitude * sin(2*pi*freq*t_pos) .* force_direction';
-
-    % Interpolate f_d to 100 kHz (same method as vd interpolation)
-    % This ensures f_d and f_m have the same delay/distortion from hardware constraint
-    if USE_REALTIME_INTERP
-        if strcmp(interp_method, 'previous')  % ZOH
-            t_query_fd = t_ctrl;
-        else  % Linear
-            t_query_fd = t_ctrl - Ts_pos;
-        end
-        t_query_fd(t_query_fd < 0) = 0;
-        f_d = interp1(t_pos, f_d_low, t_query_fd, interp_method, 'extrap');
+    % Hardware constraint parameters for Simulink (set via alloc_params.sample_rate_mode)
+    % sample_rate_mode: 1=ZOH (1600 Hz), 2=Linear (1600 Hz), 3=Direct (100 kHz)
+    if strcmpi(interp_method, 'previous')
+        sample_rate_mode = 1;  % ZOH
     else
-        f_d = interp1(t_pos, f_d_low, t_ctrl, interp_method, 'extrap');
+        sample_rate_mode = 2;  % Linear
     end
 
     % ---------------------------------------------------------------------
-    % 3.3 Inverse Model: f_d -> v_d (at 1600 Hz for efficiency)
+    % 3.2 Generate f_d at 100 kHz
     % ---------------------------------------------------------------------
-    fprintf('  Computing inverse_model @ %d Hz... ', pos_update_rate);
-    tic;
-    vd_low = zeros(N_pos, 6);
-    for i = 1:N_pos
-        vd_low(i, :) = inverse_model(f_d_low(i, :)', bead_position, inv_params)';
-    end
-    fprintf('Done (%.2f s)\n', toc);
+    % f_d: N x 3 matrix [Fx, Fy, Fz] at 100 kHz
+    % This is the reference signal for Bode analysis (command input)
+    f_d = force_amplitude * sin(2*pi*freq*t) .* force_direction';
+
+    % Note: The hardware constraint (rate transition) is handled internally
+    % by inverse_model_function in Simulink via alloc_params.sample_rate_mode.
+    % The FFT analysis compares f_d (command) vs f_m (response) to measure
+    % the full system frequency response including rate transition effects.
 
     % ---------------------------------------------------------------------
-    % 3.4 Interpolate vd to 100 kHz (with Hardware Constraint)
+    % 3.3 Simulink Simulation (Controller) - Using New Force Mode Architecture
     % ---------------------------------------------------------------------
-    % Causal Interpolation Logic:
-    %   ZOH ('previous'): No extra delay - uses latest available sample
-    %                     Inherent delay: ~0.5T
-    %   Linear ('linear'): Needs 1-period delay - requires two samples
-    %                      Inherent delay: ~1.0T
-    if USE_REALTIME_INTERP
-        if strcmp(interp_method, 'previous')  % ZOH
-            t_query = t_ctrl;
-            expected_delay_T = 0.5;
-        else  % Linear
-            t_query = t_ctrl - Ts_pos;
-            expected_delay_T = 1.0;
-        end
-        t_query(t_query < 0) = 0;
-        vd = interp1(t_pos, vd_low, t_query, interp_method, 'extrap');
-    else
-        % Ideal mode: non-causal interpolation
-        vd = interp1(t_pos, vd_low, t_ctrl, interp_method, 'extrap');
-        expected_delay_T = 0;
-    end
+    % Clear workspace variables that shadow functions (see CLAUDE.md naming convention)
+    % Note: Use direct clear (not evalin) since script runs in base workspace
+    clear vd_signal_params alloc_params pi_ctrl_params motion_control_law_params trajectory_generator_params particle_dynamics_params thermal_force_params
 
-    % ---------------------------------------------------------------------
-    % 3.5 Simulink Simulation (Controller)
-    % ---------------------------------------------------------------------
-    % Prepare vd_timeseries for Simulink From Workspace block
-    vd_timeseries = timeseries(vd, t);
-    vd_timeseries.Name = 'vd_external';
-    assignin('base', 'vd_timeseries', vd_timeseries);
+    % Create f_d timeseries for Simulink From Workspace block
+    % f_d is at 100 kHz; rate transition is handled by inverse_model_function
+    f_d_timeseries = timeseries(f_d, t);
+    f_d_timeseries.Name = 'f_d_external';
+    assignin('base', 'f_d_timeseries', f_d_timeseries);
 
-    % Set SignalType = 3 (External mode)
-    SignalType = 3;
-    assignin('base', 'SignalType', SignalType);
+    % Set signal_type = 2 (Force mode) - new architecture
+    sim_signal_type = 2;  % Force mode
+    assignin('base', 'signal_type', sim_signal_type);
 
-    % Set other required parameters
-    assignin('base', 'Channel', 1);
-    assignin('base', 'Amplitude', 0);
-    assignin('base', 'Frequency', freq);
-    assignin('base', 'Phase', 0);
-    assignin('base', 'StepTime', 0);
-    assignin('base', 'd', 0);
-    assignin('base', 'params', ctrl_params);
+    % vd_signal_params (required by Signal mode, but not used in Force mode)
+    vd_sig_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
+        'Frequency', freq, 'Ts', Ts, 'd', 0);
+    assignin('base', 'vd_signal_params', vd_sig_params);
 
-    % Set controller type and parameters
+    % alloc_params with correct sample_rate_mode for hardware constraint
+    alloc_params_sim.Value.sample_rate_mode = sample_rate_mode;
+    assignin('base', 'alloc_params', alloc_params_sim);
+
+    % Controller parameters (both R-Controller and PI are needed)
+    assignin('base', 'model_base_ctrl_params', model_base_ctrl_params_local);
+
+    % PI Controller parameters
+    pi_ctrl_params_local = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
+    assignin('base', 'pi_ctrl_params', pi_ctrl_params_local);
+
+    % Set controller type and legacy parameters
     assignin('base', 'ControllerType', ControllerType);
     assignin('base', 'Kp_value', Kp_value);
     assignin('base', 'Ki_value', Ki_value);
 
+    % Motion Control parameters (required by Simulink model even in Force mode)
+    motion_ctrl_params = motion_control_law_params('Enable', 0);
+    traj_params = trajectory_generator_params();
+    particle_params = particle_dynamics_params();
+    thermal_params = thermal_force_params('Enable', 0);
+    p0 = [0; 0; 5];
+
+    assignin('base', 'motion_control_law_params', motion_ctrl_params);
+    assignin('base', 'trajectory_generator_params', traj_params);
+    assignin('base', 'particle_dynamics_params', particle_params);
+    assignin('base', 'thermal_force_params', thermal_params);
+    assignin('base', 'p0', p0);
+
+    % pos_m_static timeseries (required by From Workspace blocks)
+    pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
+    assignin('base', 'pos_m_static', pos_m_static);
+
     % Set simulation parameters
     set_param(model_name, 'StopTime', num2str(sim_time));
-    set_param(model_name, 'Solver', 'ode5');
-    set_param(model_name, 'FixedStep', num2str(Ts));
+    % Use ode45 (variable-step) instead of ode5 (fixed-step) to handle
+    % Motion Control blocks that run at 1600 Hz (which is not an integer
+    % multiple of 100 kHz fixed-step size)
+    set_param(model_name, 'Solver', 'ode45');
+    set_param(model_name, 'MaxStep', num2str(Ts));
 
     % Run simulation
     fprintf('  Running Simulink... ');
@@ -432,12 +427,13 @@ for freq_idx = 1:num_freq
         continue;
     end
 
-    % Extract vm from simulation output
+    % Extract vm and f_m from simulation output
+    % New architecture outputs Fm directly from Force_Model block
     vm_sim = out.Vm;
     N_vm = size(vm_sim, 1);
     t_vm = (0:N_vm-1)' * Ts;
 
-    % Resample if needed
+    % Resample vm if needed
     if N_vm ~= N
         vm = zeros(N, 6);
         for ch = 1:6
@@ -448,18 +444,42 @@ for freq_idx = 1:num_freq
     end
 
     % ---------------------------------------------------------------------
-    % 3.6 Force Model: v_m -> f_m
+    % 3.4 Force Model: Extract f_m from Simulink output (new architecture)
     % ---------------------------------------------------------------------
-    fprintf('  Computing force_model... ');
-    tic;
-    f_m = zeros(N, 3);
-    for i = 1:N
-        f_m(i, :) = force_model(vm(i, :)', bead_position, inv_params)';
+    % Try to get Fm directly from simulation output (new model)
+    if isfield(out, 'Fm') || isprop(out, 'Fm')
+        Fm_ts = out.Fm;
+        if isa(Fm_ts, 'timeseries')
+            f_m_sim = Fm_ts.Data;
+        else
+            f_m_sim = Fm_ts;
+        end
+
+        % Resample f_m if needed
+        N_fm = size(f_m_sim, 1);
+        if N_fm ~= N
+            f_m = zeros(N, 3);
+            t_fm = (0:N_fm-1)' * (sim_time / (N_fm-1));
+            for ax = 1:3
+                f_m(:, ax) = interp1(t_fm, f_m_sim(:, ax), t, 'linear', 'extrap');
+            end
+        else
+            f_m = f_m_sim;
+        end
+        fprintf('  Extracted Fm from Simulink output\n');
+    else
+        % Fallback: compute force_model offline (legacy mode)
+        fprintf('  Computing force_model offline... ');
+        tic;
+        f_m = zeros(N, 3);
+        for i = 1:N
+            f_m(i, :) = force_model(vm(i, :)', bead_position, inv_params)';
+        end
+        fprintf('Done (%.2f s)\n', toc);
     end
-    fprintf('Done (%.2f s)\n', toc);
 
     % ---------------------------------------------------------------------
-    % 3.7 Steady-State Data Selection
+    % 3.5 Steady-State Data Selection
     % ---------------------------------------------------------------------
     % Dynamically adjust skip/fft cycles based on actual simulation time
     actual_cycles = sim_time / period;
@@ -498,7 +518,7 @@ for freq_idx = 1:num_freq
     end
 
     % ---------------------------------------------------------------------
-    % 3.8 Quality Check: Steady-State Detection
+    % 3.6 Quality Check: Steady-State Detection
     % ---------------------------------------------------------------------
     samples_per_cycle = round(period / Ts);
     num_cycles_check = min(5, floor(N_fft / samples_per_cycle));
@@ -522,7 +542,7 @@ for freq_idx = 1:num_freq
     end
 
     % ---------------------------------------------------------------------
-    % 3.9 FFT Analysis
+    % 3.7 FFT Analysis
     % ---------------------------------------------------------------------
     fs = 1 / Ts;
     freq_axis = (0:N_fft-1) * fs / N_fft;
@@ -564,7 +584,7 @@ for freq_idx = 1:num_freq
     phase_lag_deg(freq_idx) = phase_diff * 180 / pi;
 
     % ---------------------------------------------------------------------
-    % 3.10 Cross-Axis Analysis (Crosstalk)
+    % 3.8 Cross-Axis Analysis (Crosstalk)
     % ---------------------------------------------------------------------
     for ax = 1:3
         Fm_ax_fft = fft(f_m_steady(:, ax));
@@ -573,7 +593,7 @@ for freq_idx = 1:num_freq
     end
 
     % ---------------------------------------------------------------------
-    % 3.11 DC Error Check
+    % 3.9 DC Error Check
     % ---------------------------------------------------------------------
     dc_f_m = mean(f_m_steady(:, axis_idx));
     quality_dc_error(freq_idx) = dc_f_m;

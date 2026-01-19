@@ -363,17 +363,18 @@ if run_simulink_test
         % Configuration
         T_sim_slx = 1.0;  % Simulation time [s]
 
-        % Create parameters for Simulink
-        trajectory_generator_params = trajectory_generator_params(...
+        % Create parameters for Simulink (use different variable names to avoid
+        % overwriting the parameter functions)
+        traj_params = trajectory_generator_params(...
             'Type', 0, 'Amplitude', 2, 'Frequency', 1, 'NCycles', 3);
-        motion_control_law_params = motion_control_law_params(...
+        motion_params = motion_control_law_params(...
             'LambdaC', 0.7, 'Enable', 1);
-        particle_dynamics_params = particle_dynamics_params(...
+        particle_params = particle_dynamics_params(...
             'WallEffectEnable', 1, 'HInit', 5);
-        thermal_force_params = thermal_force_params('Enable', 0);
-        model_base_ctrl_params = model_base_ctrl_params(500, 500, 3000);
+        thermal_params = thermal_force_params('Enable', 0);
+        ctrl_params = model_base_ctrl_params(500, 500, 3000);
         alloc_params = force_model_allocation_params('Simulink', true, 'PosMSource', 1);
-        p0 = calc_initial_position_function(particle_dynamics_params.Value);
+        p0 = calc_initial_position_function(particle_params.Value);
         signal_type = 3;  % Motion Control mode
 
         % Create timeseries for From Workspace blocks
@@ -383,8 +384,24 @@ if run_simulink_test
 
         % Other required parameters
         ControllerType = 1;
-        pi_ctrl_params = pi_ctrl_params(100, 10000);
-        vd_signal_params = vd_signal_params();
+        pi_params = pi_ctrl_params(100, 10000);
+        vd_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
+            'Frequency', 100, 'Ts', 1e-5, 'd', 0);
+
+        % Assign all parameters to base workspace for Simulink
+        assignin('base', 'trajectory_generator_params', traj_params);
+        assignin('base', 'motion_control_law_params', motion_params);
+        assignin('base', 'particle_dynamics_params', particle_params);
+        assignin('base', 'thermal_force_params', thermal_params);
+        assignin('base', 'model_base_ctrl_params', ctrl_params);
+        assignin('base', 'pi_ctrl_params', pi_params);
+        assignin('base', 'vd_signal_params', vd_params);
+        assignin('base', 'alloc_params', alloc_params);
+        assignin('base', 'p0', p0);
+        assignin('base', 'signal_type', signal_type);
+        assignin('base', 'ControllerType', ControllerType);
+        assignin('base', 'f_d_timeseries', f_d_timeseries);
+        assignin('base', 'pos_m_static', pos_m_static);
 
         fprintf('Running Simulink simulation (signal_type=3, T=%.1f s)...\n', T_sim_slx);
 

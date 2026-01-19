@@ -134,6 +134,12 @@ for freq_idx = 1:num_freq
             freq_idx, num_freq, freq, period, sim_time);
     fprintf('--------------------------------------------------------\n');
 
+    % Clear workspace variables that shadow functions (see CLAUDE.md naming convention)
+    % These variables are created by assignin() in the loop and shadow the
+    % parameter functions on subsequent iterations.
+    % Note: Use direct clear (not evalin) since script runs in base workspace
+    clear vd_signal_params alloc_params motion_control_law_params trajectory_generator_params particle_dynamics_params thermal_force_params
+
     % Create vd_signal_params for this frequency
     vd_sig_params = vd_signal_params( ...
         'Mode', 1, ...  % Sine mode
@@ -182,9 +188,12 @@ for freq_idx = 1:num_freq
     assignin('base', 'pos_m_static', pos_m_static);
 
     % Configure Simulink
+    % Use ode45 (variable-step) instead of ode5 (fixed-step) to handle
+    % Motion Control blocks that run at 1600 Hz (which is not an integer
+    % multiple of 100 kHz fixed-step size)
     set_param(model_name, 'StopTime', num2str(sim_time));
-    set_param(model_name, 'Solver', config.solver);
-    set_param(model_name, 'FixedStep', num2str(config.Ts));
+    set_param(model_name, 'Solver', 'ode45');
+    set_param(model_name, 'MaxStep', num2str(config.Ts));
 
     % Run simulation
     fprintf('  Running simulation...\n');

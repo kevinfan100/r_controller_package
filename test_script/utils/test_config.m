@@ -52,7 +52,7 @@ function config = test_config(varargin)
     % ========================================================================
     config.Ts = 1e-5;                       % Sampling time [s] (100 kHz)
     config.fs = 1 / config.Ts;              % Sampling frequency [Hz]
-    config.solver = 'ode5';                 % Fixed-step solver
+    config.solver = 'ode45';                % Variable-step solver (for compatibility with 1600 Hz Motion Control)
     config.model_name = 'main_system';
 
     % ========================================================================
