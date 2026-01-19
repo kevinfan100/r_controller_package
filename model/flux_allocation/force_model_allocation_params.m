@@ -16,6 +16,7 @@ function alloc_params = force_model_allocation_params(varargin)
 %   'Simulink'       - Enable Simulink mode (default: false)
 %   'pos_m'          - Bead position [um] (default: [0;0;0])
 %   'SampleRateMode' - 1=ZOH, 2=Linear, 3=Direct (default: 2)
+%   'PosMSource'     - 0=static (from Bus), 1=dynamic (from external) (default: 0)
 %
 % Output (offline mode):
 %   alloc_params - Structure with all system parameters
@@ -39,6 +40,7 @@ function alloc_params = force_model_allocation_params(varargin)
     addParameter(p, 'Simulink', false, @islogical);
     addParameter(p, 'pos_m', [0; 0; 0], @(x) isnumeric(x) && numel(x) == 3);
     addParameter(p, 'SampleRateMode', 2, @(x) ismember(x, [1, 2, 3]));
+    addParameter(p, 'PosMSource', 0, @(x) ismember(x, [0, 1]));
     parse(p, varargin{:});
 
     use_simulink = p.Results.Simulink;
@@ -93,6 +95,7 @@ function alloc_params = force_model_allocation_params(varargin)
         % Add Simulink-specific parameters
         params.pos_m = reshape(p.Results.pos_m, [3, 1]);
         params.sample_rate_mode = p.Results.SampleRateMode;
+        params.pos_m_source = p.Results.PosMSource;
 
         % Pre-load LUT for Simulink (avoid dlmread in real-time)
         params.LUT = load_lut_array(params.lut_path);
@@ -230,6 +233,13 @@ function alloc_params = create_alloc_params_bus(params)
     elem.Dimensions = 1;
     elems = [elems; elem];
 
+    % pos_m source - Simulink specific (0=static, 1=dynamic)
+    elem = Simulink.BusElement;
+    elem.Name = 'pos_m_source';
+    elem.DataType = 'double';
+    elem.Dimensions = 1;
+    elems = [elems; elem];
+
     % LUT (6 x 1891 x 10) - Simulink specific
     elem = Simulink.BusElement;
     elem.Name = 'LUT';
@@ -256,6 +266,7 @@ function alloc_params = create_alloc_params_bus(params)
     param_struct.T_a2m = params.T_a2m;
     param_struct.pos_m = params.pos_m;
     param_struct.sample_rate_mode = params.sample_rate_mode;
+    param_struct.pos_m_source = params.pos_m_source;
     param_struct.LUT = params.LUT;
 
     alloc_params = Simulink.Parameter(param_struct);

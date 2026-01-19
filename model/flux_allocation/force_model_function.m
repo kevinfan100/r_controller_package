@@ -1,33 +1,45 @@
-function f_m = force_model_function(v_m, params)
+function f_m = force_model_function(v_m, pos_m_ext, params)
 % FORCE_MODEL_FUNCTION Hall voltage -> Estimated force (Simulink version)
 %
-% Simulink-compatible force model. Position (pos_m) is extracted from
-% the params Bus, eliminating the need for a separate pos_m input.
+% Simulink-compatible force model. Supports both static pos_m (from params)
+% and dynamic pos_m (from external) for closed-loop motion control.
 %
 % Formula: F = g_H * Phi_hat' * L * Phi_hat
 %   where Phi_hat = D_H_hat * V_m (normalized flux)
 %   and L = position-dependent gradient matrices
 %
 % Inputs:
-%   v_m    - Measured Hall sensor voltage (6x1) [V]
-%   params - Parameters from force_model_allocation_params('Simulink', true)
-%            Required fields:
-%            .pos_m    - Bead position (3x1) [um]
-%            .D_H_hat  - Normalized Hall gain matrix (6x6)
-%            .T_m2a    - Measuring to Actuator transform (3x3)
-%            .T_a2m    - Actuator to Measuring transform (3x3)
-%            .g_H      - Force gain [pN/V^2]
-%            .R_norm   - Normalization radius [um]
+%   v_m        - Measured Hall sensor voltage (6x1) [V]
+%   pos_m_ext  - External bead position (3x1) [um], used when pos_m_source=1
+%   params     - Parameters from force_model_allocation_params('Simulink', true)
+%                Required fields:
+%                .pos_m        - Bead position (3x1) [um] (used when pos_m_source=0)
+%                .pos_m_source - 0=static (from params), 1=dynamic (from pos_m_ext)
+%                .D_H_hat      - Normalized Hall gain matrix (6x6)
+%                .T_m2a        - Measuring to Actuator transform (3x3)
+%                .T_a2m        - Actuator to Measuring transform (3x3)
+%                .g_H          - Force gain [pN/V^2]
+%                .R_norm       - Normalization radius [um]
 %
 % Output:
 %   f_m    - Estimated force (3x1), Measuring coordinate [pN]
+%
+% Dynamic pos_m Mode (pos_m_source=1):
+%   When integrated with Particle Dynamics, pos_m_ext comes from the
+%   particle position, enabling position-dependent force estimation
+%   in closed-loop motion control.
 %
 % See also: force_model, force_model_allocation_params, CLAUDE.md
 
 %#codegen
 
-    %% Extract position from params
-    pos_m = params.pos_m;
+    %% Extract position (select source based on pos_m_source)
+    % 0=static (from params), 1=dynamic (from external)
+    if params.pos_m_source > 0.5
+        pos_m = pos_m_ext;
+    else
+        pos_m = params.pos_m;
+    end
 
     %% Step 1: V_m -> Phi_hat (normalized flux)
     Phi_hat = params.D_H_hat * v_m;

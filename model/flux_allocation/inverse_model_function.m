@@ -1,25 +1,27 @@
-function v_d = inverse_model_function(f_d, params)
+function v_d = inverse_model_function(f_d, pos_m_ext, params)
 % INVERSE_MODEL_FUNCTION Desired force -> Desired Hall voltage with rate transition
 %
 % Simulink-compatible inverse model with built-in rate transition.
-% All parameters (including pos_m, sample_rate_mode) come from params.
+% Supports both static pos_m (from params) and dynamic pos_m (from external).
 % Phase counter is managed internally using persistent variables.
 %
 % This function implements the 8-stage Inverse Model pipeline plus
 % rate transition logic for simulating hardware constraints.
 %
 % Inputs:
-%   f_d    - Desired force (3x1), Measuring coordinate [pN]
-%   params - Parameters from force_model_allocation_params('Simulink', true)
-%            Required fields:
-%            .pos_m            - Bead position (3x1) [um]
-%            .sample_rate_mode - 1=ZOH, 2=Linear, 3=Direct
-%            .T_m2a            - Measuring to Actuator transform (3x3)
-%            .g_H              - Force gain [pN/V^2]
-%            .force_scale      - Force scaling factor
-%            .R_norm           - Normalization radius [um]
-%            .DH_hat_inv_KI    - Pre-computed D_H_hat^-1 * K_I (6x6)
-%            .LUT              - Pre-loaded LUT data (6 x 1891 x 10)
+%   f_d        - Desired force (3x1), Measuring coordinate [pN]
+%   pos_m_ext  - External bead position (3x1) [um], used when pos_m_source=1
+%   params     - Parameters from force_model_allocation_params('Simulink', true)
+%                Required fields:
+%                .pos_m            - Bead position (3x1) [um] (used when pos_m_source=0)
+%                .pos_m_source     - 0=static (from params), 1=dynamic (from pos_m_ext)
+%                .sample_rate_mode - 1=ZOH, 2=Linear, 3=Direct
+%                .T_m2a            - Measuring to Actuator transform (3x3)
+%                .g_H              - Force gain [pN/V^2]
+%                .force_scale      - Force scaling factor
+%                .R_norm           - Normalization radius [um]
+%                .DH_hat_inv_KI    - Pre-computed D_H_hat^-1 * K_I (6x6)
+%                .LUT              - Pre-loaded LUT data (6 x 1891 x 10)
 %
 % Output:
 %   v_d    - Desired Hall sensor voltage (6x1) [V]
@@ -28,6 +30,11 @@ function v_d = inverse_model_function(f_d, params)
 %   1 (ZOH)    - Zero-order hold at 1600 Hz
 %   2 (Linear) - Linear interpolation at 1600 Hz (default)
 %   3 (Direct) - Direct execution at 100 kHz
+%
+% Dynamic pos_m Mode (pos_m_source=1):
+%   When integrated with Particle Dynamics, pos_m_ext comes from the
+%   particle position output at 1600 Hz, enabling position-dependent
+%   force allocation in closed-loop motion control.
 %
 % See also: force_model_allocation_params, inverse_model, CLAUDE.md
 
@@ -43,7 +50,12 @@ function v_d = inverse_model_function(f_d, params)
     end
 
     %% Extract parameters from Bus
-    pos_m = params.pos_m;
+    % Select pos_m source: 0=static (from params), 1=dynamic (from external)
+    if params.pos_m_source > 0.5
+        pos_m = pos_m_ext;
+    else
+        pos_m = params.pos_m;
+    end
     sample_rate_mode = params.sample_rate_mode;
 
     %% Rate Transition Constants
