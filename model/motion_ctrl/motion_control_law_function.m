@@ -3,8 +3,12 @@ function f_d = motion_control_law_function(p_d, p_m, params)
 %
 % Implements closed-loop position control for overdamped particle dynamics.
 %
-% Control Law:
+% Control Law (d=0, no delay compensation):
 %   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
+%
+% Control Law (d=2, with delay compensation - Paper Eq.17):
+%   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
+%            - (1-lambda_c) * {f_d[k-1] + f_d[k-2]}
 %
 % When noise_filter_enable = 1:
 %   p_feedback = p_m_filtered (IIR low-pass filtered position)
@@ -44,11 +48,14 @@ function f_d = motion_control_law_function(p_d, p_m, params)
 
 %#codegen
 
-    persistent p_d_prev p_m_filtered_prev initialized
+    persistent p_d_prev p_d_prev2 f_d_prev1 f_d_prev2 p_m_filtered_prev initialized
 
     % Initialize on first call
     if isempty(initialized)
         p_d_prev = p_d;
+        p_d_prev2 = p_d;
+        f_d_prev1 = zeros(3, 1);
+        f_d_prev2 = zeros(3, 1);
         p_m_filtered_prev = p_m;
         initialized = true;
     end
@@ -57,7 +64,10 @@ function f_d = motion_control_law_function(p_d, p_m, params)
     if params.enable < 0.5
         f_d = zeros(3, 1);
         % Still update states for potential switch to closed-loop
+        p_d_prev2 = p_d_prev;
         p_d_prev = p_d;
+        f_d_prev2 = f_d_prev1;
+        f_d_prev1 = f_d;
         p_m_filtered_prev = params.filter_alpha * p_m + (1 - params.filter_alpha) * p_m_filtered_prev;
         return;
     end
@@ -79,12 +89,36 @@ function f_d = motion_control_law_function(p_d, p_m, params)
         p_feedback = p_m;
     end
 
-    % Compute control force
-    % f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
-    f_d = (gamma / Ts) * (p_d - lambda_c * p_d_prev - (1 - lambda_c) * p_feedback);
+    % Pre-compute common terms
+    one_minus_lambda = 1 - lambda_c;
 
-    % Update states for next iteration
-    p_d_prev = p_d;
+    % =========================================================================
+    % Control Law Selection
+    % =========================================================================
+    if params.delay_comp_enable > 0.5
+        % ---------------------------------------------------------------------
+        % Delay Compensation Control Law (d=2) - Paper Eq.17
+        % ---------------------------------------------------------------------
+        % f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
+        %          - (1-lambda_c) * {f_d[k-1] + f_d[k-2]}
+        %
+        % Note: p_d[k+1] approximated by p_d[k] (ZOH assumption)
+
+        f_d = (gamma / Ts) * (p_d - lambda_c * p_d_prev - one_minus_lambda * p_feedback) - one_minus_lambda * (f_d_prev1 + f_d_prev2);
+    else
+        % ---------------------------------------------------------------------
+        % Original Control Law (d=0) - No delay compensation
+        % ---------------------------------------------------------------------
+        f_d = (gamma / Ts) * (p_d - lambda_c * p_d_prev - one_minus_lambda * p_feedback);
+    end
+
+    % =========================================================================
+    % Update States for Next Iteration
+    % =========================================================================
+    p_d_prev2 = p_d_prev;           % p_d[k-2] <- p_d[k-1]
+    p_d_prev = p_d;                 % p_d[k-1] <- p_d[k]
+    f_d_prev2 = f_d_prev1;          % f_d[k-2] <- f_d[k-1]
+    f_d_prev1 = f_d;                % f_d[k-1] <- f_d[k]
     p_m_filtered_prev = p_m_filtered;
 
 end

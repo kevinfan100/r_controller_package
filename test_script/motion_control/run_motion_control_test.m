@@ -6,7 +6,7 @@
 %   - Motion Control Law (position tracking)
 %   - Particle Dynamics (Wall Effect, Thermal Force)
 %   - Force Allocation (inverse_model, force_model)
-%   - Inner Loop Control (R-Controller)
+%   - Inner Loop Control 
 %
 % Supports multiple trajectory modes and configurable physical effects.
 %
@@ -17,7 +17,7 @@
 clear; clc; close all;
 
 % === Test Name ===
-test_name = 'motion_test';
+test_name = 'test';
 
 % === Trajectory Mode ===
 % Options: 'z_sine', 'xy_circle', 'positioning'
@@ -39,8 +39,18 @@ h_min = 1.1 * 2.25;                  % Minimum safe distance [um]
 % === Motion Control Parameters ===
 ctrl_enable = true;             % true=closed-loop, false=open-loop
 lambda_c = 0.7;                 % Closed-loop pole (0 < lambda < 1)
+delay_comp_enable = true;       % d=2
 noise_filter_enable = false;    % Feedback low-pass filter
 noise_filter_cutoff = 10;       % Filter cutoff frequency [Hz]
+
+% Delay steps: automatically set based on delay_comp_enable
+% - delay_comp_enable = true  → delay_steps = 2 (simulate measurement delay)
+% - delay_comp_enable = false → delay_steps = 0 (no delay)
+if delay_comp_enable
+    delay_steps = 2;
+else
+    delay_steps = 0;
+end
 
 % === Physical Effects ===
 thermal_enable = true;          % Thermal force (Brownian motion)
@@ -150,7 +160,8 @@ fprintf('  particle_dynamics_params created\n');
 % Motion control parameters
 motion_params = motion_control_law_params( ...
     'LambdaC', lambda_c, ...
-    'Enable', ctrl_enable);
+    'Enable', ctrl_enable, ...
+    'DelayCompEnable', delay_comp_enable);
 fprintf('  motion_control_law_params created\n');
 
 % Thermal force parameters
@@ -251,9 +262,11 @@ assignin('base', 'signal_type', signal_type);
 assignin('base', 'ControllerType', ControllerType);
 assignin('base', 'f_d_timeseries', f_d_timeseries);
 assignin('base', 'pos_m_static', pos_m_static);
+assignin('base', 'delay_steps', delay_steps);
 
 fprintf('  Parameters assigned to base workspace\n');
-fprintf('  signal_type = %d (Motion Control mode)\n\n', signal_type);
+fprintf('  signal_type = %d (Motion Control mode)\n', signal_type);
+fprintf('  delay_steps = %d (for p_m feedback delay)\n\n', delay_steps);
 
 %% SECTION 7: Run Simulation
 % =========================================================================
