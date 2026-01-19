@@ -44,7 +44,7 @@ test_name = 'force_control_test';
 % Select which controller to use:
 %   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'pi_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -84,7 +84,7 @@ step_sim_time = 0.5;            % Step mode simulation time [s]
 % Select signal generation mode:
 %   'hardware' - Simulate hardware constraint (1600 Hz generation + interpolation)
 %   'ideal'    - Direct 100 kHz generation (no interpolation delay)
-generation_mode = 'ideal';   % 'hardware' or 'ideal'
+generation_mode = 'hardware';   % 'hardware' or 'ideal'
 
 % Hardware mode parameters (only used when generation_mode = 'hardware')
 pos_update_rate = 1600;         % Position update frequency [Hz]
@@ -94,9 +94,9 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ide
 % ─────────────────────────────────────────────────────────────────────────
 % 1.6 R-Controller Parameters
 % ─────────────────────────────────────────────────────────────────────────
-fB_f = 3000;                    % Feedforward bandwidth [Hz]
-fB_c = 3200;                    % Controller bandwidth [Hz]
-fB_e = 16000;                    % Estimator bandwidth [Hz]
+fB_f = 2000;                    % Feedforward bandwidth [Hz]
+fB_c = 1000;                    % Controller bandwidth [Hz]
+fB_e = 5000;                    % Estimator bandwidth [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.7 PI Controller Parameters
@@ -229,7 +229,7 @@ fprintf('  SampleRateMode: %d (%s)\n', sample_rate_mode, sample_rate_labels{samp
 % Generate f_d at 100 kHz
 f_d = zeros(N, 3);
 if strcmpi(signal_type, 'sine')
-    envelope = force_amplitude * sin(2*pi*force_frequency*t + deg2rad(force_phase));
+    envelope = force_amplitude * sin(2*pi*force_frequency*t + deg2rad(force_phase)) + 10;
     f_d = envelope .* force_direction';
     fprintf('  f_d: Sine wave, %.1f Hz, %.2f pN amplitude\n', force_frequency, force_amplitude);
 else

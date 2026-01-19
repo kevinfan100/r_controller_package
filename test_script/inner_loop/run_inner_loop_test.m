@@ -29,9 +29,9 @@ controller_type = 'model_base_ctrl';
 
 % Signal parameters
 d = 0;                              % Preview steps
-channel = 1;                        % Excitation channel (1-6)
+channel = 3;                        % Excitation channel (1-6)
 amplitude = 2;                      % Amplitude [V]
-frequency = 10;                    % Sine frequency [Hz]
+frequency = 100;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
@@ -43,7 +43,7 @@ config = test_config('Type', 'inner_loop');
 styles = plot_styles();
 
 % R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
-fB_f = 0;
+fB_f = 3000;
 fB_c = 300;
 fB_e = 500;
 
