@@ -23,18 +23,18 @@ test_name = 'motion_test';
 % Options: 'z_sine', 'xy_circle', 'positioning'
 traj_type = 'z_sine';
 h_init = 5;                     % Initial wall distance [um]
-amplitude = 1.5;                % z_sine amplitude [um] (safe: h_init - amplitude > h_min)
-frequency = 1;                  % z_sine frequency [Hz]
+amplitude = 2.5;                % z_sine amplitude [um] (safe: h_init - amplitude > h_min)
+frequency = 10;                  % z_sine frequency [Hz]
 n_cycles = 3;                   % Number of cycles
 radius = 5;                     % xy_circle radius [um]
 period = 1;                     % xy_circle period [s]
-hold_time = 3;                  % positioning hold time [s]
+hold_time = 1;                  % positioning hold time [s]
 
 % === Wall Parameters ===
 theta = 0;                      % Azimuth angle [rad]
 phi = 0;                        % Polar angle [rad]
 pz = 0;                         % Wall displacement [um]
-h_min = 3.375;                  % Minimum safe distance [um] (1.5*R)
+h_min = 1.1 * 2.25;                  % Minimum safe distance [um]
 
 % === Motion Control Parameters ===
 ctrl_enable = true;             % true=closed-loop, false=open-loop
@@ -53,7 +53,7 @@ pos_update_rate = 1600;         % Position update rate [Hz]
 
 % === Inner Loop Controller ===
 % Options: 'model_base_ctrl' or 'pi_ctrl'
-controller_type = 'model_base_ctrl';
+controller_type = 'pi_ctrl';
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
 fB_e = 16000;                   % Estimator bandwidth [Hz]
@@ -61,10 +61,10 @@ Kp_value = 2;                   % PI proportional gain
 Ki_value = 4412;                % PI integral gain
 
 % === Analysis Parameters ===
-cutoff_freq = 10;               % Deterministic/random separation cutoff [Hz]
+cutoff_freq = 3;               % Deterministic/random separation cutoff [Hz]
 
 % === Simulation Parameters ===
-T_margin = 0.3;                 % Post-trajectory buffer time [s]
+T_margin = 1/frequency;                 % Post-trajectory buffer time [s]
 
 % === Output Control ===
 ENABLE_PLOT = true;
@@ -287,10 +287,10 @@ end
 fprintf('[Data Extraction]\n');
 fprintf('------------------------\n');
 
-% Position data (1600 Hz rate from Motion Control)
-p_d_out = out.p_d;  % Desired position [N_motion x 3]
-p_m_out = out.p_m;  % Actual position [N_motion x 3]
-f_d_out = out.f_m;  % Control force [N_motion x 3] (f_m from Motion_Control)
+% Position data (from Motion Control)
+p_d_out = out.p_d;
+p_m_out = out.p_m;
+f_d_out = out.f_m;
 
 % Get thermal force if available
 if isfield(out, 'F_th')
@@ -300,20 +300,72 @@ else
 end
 
 % Inner loop data (100 kHz rate)
-v_d_out = out.Vd;   % Desired voltage [N_inner x 6]
-v_m_out = out.Vm;   % Measured voltage [N_inner x 6]
-u_out = out.u;      % Current output [N_inner x 6]
+v_d_out = out.Vd;
+v_m_out = out.Vm;
+
+% Control voltage output depends on selected controller
+% ControllerType=1: model_base_ctrl (out.u), ControllerType=2: pi_ctrl (out.u_pi)
+if ControllerType == 1
+    u_out = out.u;      % Model-based controller output
+else
+    u_out = out.u_pi;   % PI controller output
+end
+
+% Print data info
+fprintf('  Controller: %s\n', conditional_str(ControllerType == 1, 'model_base_ctrl', 'pi_ctrl'));
 
 % Create time vectors
-Ts_motion = 1/pos_update_rate;
+% Note: All Simulink To Workspace outputs are at 100 kHz (Ts = 1e-5)
+% Motion Control internally updates at 1600 Hz, but logged at 100 kHz (shows ZOH steps)
 N_motion = size(p_d_out, 1);
-t_motion = (0:N_motion-1)' * Ts_motion;
+t_motion = (0:N_motion-1)' * Ts;  % 100 kHz time vector
 
 N_inner = size(v_d_out, 1);
-t_inner = (0:N_inner-1)' * Ts;
+t_inner = (0:N_inner-1)' * Ts;    % 100 kHz time vector
 
-fprintf('  Motion Control: %d samples (%.2f s)\n', N_motion, t_motion(end));
-fprintf('  Inner Loop: %d samples (%.2f s)\n', N_inner, t_inner(end));
+fprintf('  Motion Control data: %d samples (%.2f s) @ 100 kHz\n', N_motion, t_motion(end));
+fprintf('  Inner Loop data: %d samples (%.2f s) @ 100 kHz\n', N_inner, t_inner(end));
+fprintf('  (Motion Control updates at %d Hz internally)\n', pos_update_rate);
+
+% -------------------------------------------------------------------------
+% Post-processing: Apply interpolation to p_d, f_d based on sample_rate_mode
+% This makes the analysis consistent with vd interpolation behavior
+% -------------------------------------------------------------------------
+if sample_rate_mode == 2  % Linear interpolation mode
+    fprintf('  Applying linear interpolation to p_d, f_d (post-processing)...\n');
+
+    % Calculate 1600 Hz sample indices
+    Ts_motion = 1/pos_update_rate;
+    downsample_factor = round(Ts_motion / Ts);  % 100kHz/1600Hz ≈ 62-63
+    idx_1600 = 1:downsample_factor:N_motion;
+
+    % Ensure last point is included
+    if idx_1600(end) ~= N_motion
+        idx_1600 = [idx_1600, N_motion];
+    end
+
+    t_1600 = t_motion(idx_1600);
+
+    % Linear interpolation for p_d
+    p_d_1600 = p_d_out(idx_1600, :);
+    for i = 1:3
+        p_d_out(:, i) = interp1(t_1600, p_d_1600(:, i), t_motion, 'linear', 'extrap');
+    end
+
+    % Linear interpolation for f_d
+    f_d_1600 = f_d_out(idx_1600, :);
+    for i = 1:3
+        f_d_out(:, i) = interp1(t_1600, f_d_1600(:, i), t_motion, 'linear', 'extrap');
+    end
+
+    fprintf('  Done (1600 Hz → 100 kHz linear interpolation)\n');
+
+elseif sample_rate_mode == 1  % ZOH mode
+    fprintf('  ZOH mode: p_d, f_d remain as 1600 Hz step data\n');
+
+else  % Direct mode (mode=3)
+    fprintf('  Direct mode: p_d, f_d at native rate (no interpolation needed)\n');
+end
 
 %% SECTION 9: Analysis
 % =========================================================================
@@ -379,8 +431,8 @@ if ENABLE_PLOT
     tabgroup.Units = 'normalized';
     tabgroup.Position = [0 0 1 1];
 
-    % Tab 1: 3D Trajectory
-    tab1 = create_3d_trajectory_tab(tabgroup, p_d_out, p_m_out, w_hat, pz, styles);
+    % Tab 1: 3D Trajectory (pass particle_params for wall vectors)
+    tab1 = create_3d_trajectory_tab(tabgroup, p_d_out, p_m_out, particle_params.Value, styles);
     fprintf('  Tab 1: 3D Trajectory\n');
 
     % Tab 2-4: XYZ Axis Analysis
@@ -405,16 +457,16 @@ if ENABLE_PLOT
     tab7 = create_voltage_tracking_tab(tabgroup, t_inner, v_d_out, v_m_out, styles);
     fprintf('  Tab 7: Voltage Tracking\n');
 
-    % Tab 8: Current Output (6 channels)
-    tab8 = create_current_output_tab(tabgroup, t_inner, u_out, styles);
-    fprintf('  Tab 8: Current Output\n');
+    % Tab 8: Control Output (6 channels)
+    tab8 = create_control_output_tab(tabgroup, t_inner, u_out, styles);
+    fprintf('  Tab 8: Control Output\n');
 
     % Tab 9: FFT Spectrum
     tab9 = create_fft_spectrum_tab(tabgroup, t_motion, p_m_out, pos_update_rate, cutoff_freq, styles);
     fprintf('  Tab 9: FFT Spectrum\n');
 
-    % Tab 10: Deterministic/Random Separation
-    tab10 = create_separation_tab(tabgroup, t_motion, p_m_out, p_d_out, pos_update_rate, cutoff_freq, styles);
+    % Tab 10: Deterministic/Random Separation (on p_m)
+    tab10 = create_separation_tab(tabgroup, t_motion, p_m_out, pos_update_rate, cutoff_freq, styles);
     fprintf('  Tab 10: Deterministic/Random Separation\n');
 
     % Tab 11: Wall Distance Monitoring
@@ -565,7 +617,7 @@ function type_num = get_traj_type_num(traj_type)
     end
 end
 
-function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, w_hat, pz, styles)
+function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, particle_params, styles)
     tab = uitab(tabgroup, 'Title', '3D Trajectory');
     ax = uiaxes(tab);
     ax.Position = [80 80 800 700];
@@ -583,17 +635,36 @@ function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, w_hat, pz, styles)
     plot3(ax, p_d(1,1), p_d(1,2), p_d(1,3), 'go', ...
         'MarkerSize', 12, 'MarkerFaceColor', 'g', 'DisplayName', 'Start');
 
-    % Draw wall plane (simplified)
-    x_range = [min([p_d(:,1); p_m(:,1)]), max([p_d(:,1); p_m(:,1)])];
-    y_range = [min([p_d(:,2); p_m(:,2)]), max([p_d(:,2); p_m(:,2)])];
+    % Extract wall parameters
+    w_hat = particle_params.w_hat;
+    u_hat = particle_params.u_hat;
+    v_hat = particle_params.v_hat;
+    pz = particle_params.pz;
 
-    if abs(w_hat(3)) > 0.99  % Wall is approximately horizontal
-        [X, Y] = meshgrid(linspace(x_range(1)-1, x_range(2)+1, 10), ...
-                         linspace(y_range(1)-1, y_range(2)+1, 10));
-        Z = ones(size(X)) * pz;
-        surf(ax, X, Y, Z, 'FaceAlpha', 0.3, 'EdgeColor', 'none', ...
-            'FaceColor', [0.5, 0.5, 0.5], 'DisplayName', 'Wall');
-    end
+    % Calculate trajectory extent for wall size
+    all_pts = [p_d; p_m];
+    center = mean(all_pts, 1)';
+    extent = max(abs(all_pts - center'), [], 1);
+    wall_size = max(extent) * 1.5;  % 1.5x the trajectory extent
+    wall_size = max(wall_size, 3);  % Minimum 3 um
+
+    % Find wall center point (project trajectory center onto wall plane)
+    % Wall equation: dot(p - pz*w_hat, w_hat) = 0
+    dist_to_wall = dot(center, w_hat) - pz;
+    wall_center = center - dist_to_wall * w_hat;
+
+    % Create grid in wall coordinate system (u_hat, v_hat plane)
+    [U, V] = meshgrid(linspace(-wall_size, wall_size, 15), ...
+                     linspace(-wall_size, wall_size, 15));
+
+    % Transform to 3D coordinates
+    X = wall_center(1) + U * u_hat(1) + V * v_hat(1);
+    Y = wall_center(2) + U * u_hat(2) + V * v_hat(2);
+    Z = wall_center(3) + U * u_hat(3) + V * v_hat(3);
+
+    % Draw wall surface
+    surf(ax, X, Y, Z, 'FaceAlpha', 0.3, 'EdgeColor', 'none', ...
+        'FaceColor', [0.5, 0.5, 0.5], 'DisplayName', 'Wall');
 
     xlabel(ax, 'X [um]', 'FontSize', styles.xlabel_fontsize, 'FontWeight', 'bold');
     ylabel(ax, 'Y [um]', 'FontSize', styles.ylabel_fontsize, 'FontWeight', 'bold');
@@ -602,6 +673,7 @@ function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, w_hat, pz, styles)
     legend(ax, 'Location', 'best', 'FontSize', styles.legend_fontsize);
     grid(ax, 'on');
     view(ax, 45, 30);
+    axis(ax, 'equal');  % Equal aspect ratio for better 3D visualization
     ax.LineWidth = styles.axis_linewidth;
 end
 
@@ -727,11 +799,23 @@ function tab = create_voltage_tracking_tab(tabgroup, t, v_d, v_m, styles)
     end
 end
 
-function tab = create_current_output_tab(tabgroup, t, u, styles)
-    tab = uitab(tabgroup, 'Title', 'Current Output');
-    tl = tiledlayout(tab, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
-    title(tl, 'Current Output (6 Channels)', ...
-        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+function tab = create_control_output_tab(tabgroup, t, u, styles)
+    tab = uitab(tabgroup, 'Title', 'Control Output');
+
+    n_channels = size(u, 2);
+
+    if n_channels >= 6
+        tl = tiledlayout(tab, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl, 'Control Output u (6 Channels)', ...
+            'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+        channels_to_plot = 6;
+    else
+        % Handle unexpected dimensions
+        tl = tiledlayout(tab, 1, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl, sprintf('Control Output u (%d channel(s) - check Simulink model)', n_channels), ...
+            'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+        channels_to_plot = n_channels;
+    end
 
     colors = styles.channel_colors;
 
@@ -741,12 +825,13 @@ function tab = create_current_output_tab(tabgroup, t, u, styles)
     t_disp = t(idx);
     u_disp = u(idx, :);
 
-    for ch = 1:6
+    for ch = 1:channels_to_plot
         ax = nexttile(tl);
-        plot(ax, t_disp*1000, u_disp(:,ch), 'Color', colors(ch,:), ...
+        color_idx = min(ch, size(colors, 1));
+        plot(ax, t_disp*1000, u_disp(:,ch), 'Color', colors(color_idx,:), ...
             'LineWidth', styles.measurement_linewidth);
         xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
-        ylabel(ax, 'Current [A]', 'FontSize', styles.ylabel_fontsize-2);
+        ylabel(ax, 'u [V]', 'FontSize', styles.ylabel_fontsize-2);
         title(ax, sprintf('P%d', ch), 'FontSize', styles.title_fontsize-2);
         grid(ax, 'on');
         ax.LineWidth = styles.axis_linewidth;
@@ -789,40 +874,36 @@ function tab = create_fft_spectrum_tab(tabgroup, t, p_m, fs, cutoff_freq, styles
     end
 end
 
-function tab = create_separation_tab(tabgroup, t, p_m, p_d, fs, cutoff_freq, styles)
+function tab = create_separation_tab(tabgroup, t, p_m, fs, cutoff_freq, styles)
     tab = uitab(tabgroup, 'Title', 'Det/Random');
     tl = tiledlayout(tab, 3, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
-    title(tl, sprintf('Deterministic/Random Separation (cutoff: %.1f Hz)', cutoff_freq), ...
+    title(tl, sprintf('p_m Deterministic/Random Separation (cutoff: %.1f Hz)', cutoff_freq), ...
         'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
 
     axis_names = {'X', 'Y', 'Z'};
     colors = styles.force_colors;
 
     % Design low-pass filter
-    N_filt = size(p_m, 1);
     [b, a] = butter(4, cutoff_freq / (fs/2), 'low');
 
     for i = 1:3
-        % Error signal
-        err = p_m(:,i) - p_d(:,i);
+        % Separate p_m into deterministic (low-freq) and random (high-freq)
+        det_comp = filtfilt(b, a, p_m(:,i));
+        rand_comp = p_m(:,i) - det_comp;
 
-        % Separate deterministic and random
-        det_comp = filtfilt(b, a, err);
-        rand_comp = err - det_comp;
-
-        % Left column: Deterministic
+        % Left column: Deterministic (low-frequency component)
         ax1 = nexttile(tl, 2*(i-1)+1);
-        plot(ax1, t*1000, det_comp*1000, 'Color', colors(i,:), ...
+        plot(ax1, t*1000, det_comp, 'Color', colors(i,:), ...
             'LineWidth', styles.measurement_linewidth);
         xlabel(ax1, 'Time [ms]', 'FontSize', styles.xlabel_fontsize-2);
-        ylabel(ax1, sprintf('%s [nm]', axis_names{i}), 'FontSize', styles.ylabel_fontsize-2);
+        ylabel(ax1, sprintf('%s [um]', axis_names{i}), 'FontSize', styles.ylabel_fontsize-2);
         if i == 1
             title(ax1, 'Deterministic (Low-freq)', 'FontSize', styles.title_fontsize-2);
         end
         grid(ax1, 'on');
         ax1.LineWidth = styles.axis_linewidth;
 
-        % Right column: Random
+        % Right column: Random (high-frequency component)
         ax2 = nexttile(tl, 2*(i-1)+2);
         plot(ax2, t*1000, rand_comp*1000, 'Color', colors(i,:), ...
             'LineWidth', styles.measurement_linewidth);

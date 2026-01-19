@@ -30,8 +30,8 @@ controller_type = 'pi_ctrl';
 % Signal parameters
 d = 0;                              % Preview steps
 channel = 1;                        % Excitation channel (1-6)
-amplitude = 1;                      % Amplitude [V]
-frequency = 100;                    % Sine frequency [Hz]
+amplitude = 2;                      % Amplitude [V]
+frequency = 200;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
@@ -265,8 +265,16 @@ fprintf('------------------------\n');
 
 v_d = out.Vd;
 v_m = out.Vm;
-u = out.u;
-u_w1 = out.u_w1;
+
+% Control effort output depends on selected controller
+% ControllerType=1: model_base_ctrl (out.u), ControllerType=2: pi_ctrl (out.u_pi)
+if ControllerType == 1
+    u = out.u;          % Model-based controller output
+    u_w1 = out.u_w1;    % Model-based controller internal estimation (only for model_base_ctrl)
+else
+    u = out.u_pi;       % PI controller output
+    u_w1 = [];          % PI controller has no u_w1 signal
+end
 
 N = size(v_d, 1);
 t = (0:N-1)' * Ts;
@@ -274,8 +282,11 @@ t = (0:N-1)' * Ts;
 fprintf('  Data points: %d (%.3f s)\n', N, t(end));
 fprintf('  v_d: [%d x %d], v_m: [%d x %d]\n', ...
         size(v_d, 1), size(v_d, 2), size(v_m, 1), size(v_m, 2));
-fprintf('  u: [%d x %d], u_w1: [%d x %d]\n\n', ...
-        size(u, 1), size(u, 2), size(u_w1, 1), size(u_w1, 2));
+fprintf('  u (%s): [%d x %d]\n', controller_type, size(u, 1), size(u, 2));
+if ~isempty(u_w1)
+    fprintf('  u_w1: [%d x %d]\n', size(u_w1, 1), size(u_w1, 2));
+end
+fprintf('\n');
 
 %% Steady-State Analysis (Sine Mode)
 
@@ -472,23 +483,26 @@ if ENABLE_PLOT
                                     '6ch Time Response');
         fprintf('  Tab 2: 6ch Time Response\n');
 
-        % Detail window for u and u_w1
+        % Detail window for u (and u_w1 if model_base_ctrl)
         detail_cycles = 10;
         t_start_detail = max(0, t(end) - detail_cycles * period);
         idx_detail = t >= t_start_detail;
         t_detail = t(idx_detail);
         u_detail = u(idx_detail, :);
-        u_w1_detail = u_w1(idx_detail, :);
 
         tab3 = create_control_input_plot(tabgroup, t_detail, u_detail, ...
                                          fB_f, fB_c, fB_e, detail_cycles, styles, ...
                                          'Control Input (u)');
         fprintf('  Tab 3: Control Input (u)\n');
 
-        tab4 = create_control_input_plot(tabgroup, t_detail, u_w1_detail, ...
-                                         fB_f, fB_c, fB_e, detail_cycles, styles, ...
-                                         'u_w1 Estimation');
-        fprintf('  Tab 4: u_w1 Estimation\n');
+        % Tab 4: u_w1 Estimation (only for model_base_ctrl)
+        if ~isempty(u_w1)
+            u_w1_detail = u_w1(idx_detail, :);
+            tab4 = create_control_input_plot(tabgroup, t_detail, u_w1_detail, ...
+                                             fB_f, fB_c, fB_e, detail_cycles, styles, ...
+                                             'u_w1 Estimation');
+            fprintf('  Tab 4: u_w1 Estimation\n');
+        end
 
         tab5 = create_6ch_time_plot(tabgroup, t, v_d, v_m, ...
                                     channel, frequency, -1, styles, ...
@@ -516,22 +530,25 @@ if ENABLE_PLOT
                                     '6ch Time Response');
         fprintf('  Tab 2: 6ch Time Response\n');
 
-        % Steady state data for u and u_w1
+        % Steady state data for u (and u_w1 if model_base_ctrl)
         steady_time = 0.1;
         idx_steady_step = t >= (t(end) - steady_time);
         t_steady_step = t(idx_steady_step);
         u_steady = u(idx_steady_step, :);
-        u_w1_steady = u_w1(idx_steady_step, :);
 
         tab3 = create_control_input_plot(tabgroup, t_steady_step - t_steady_step(1), ...
                                          u_steady, fB_f, fB_c, fB_e, -1, styles, ...
                                          'Control Input (u)');
         fprintf('  Tab 3: Control Input (u)\n');
 
-        tab4 = create_control_input_plot(tabgroup, t_steady_step - t_steady_step(1), ...
-                                         u_w1_steady, fB_f, fB_c, fB_e, -1, styles, ...
-                                         'u_w1 Estimation');
-        fprintf('  Tab 4: u_w1 Estimation\n');
+        % Tab 4: u_w1 Estimation (only for model_base_ctrl)
+        if ~isempty(u_w1)
+            u_w1_steady = u_w1(idx_steady_step, :);
+            tab4 = create_control_input_plot(tabgroup, t_steady_step - t_steady_step(1), ...
+                                             u_w1_steady, fB_f, fB_c, fB_e, -1, styles, ...
+                                             'u_w1 Estimation');
+            fprintf('  Tab 4: u_w1 Estimation\n');
+        end
 
         tab5 = create_6ch_time_plot(tabgroup, t, v_d, v_m, ...
                                     channel, 0, -1, styles, ...
@@ -558,7 +575,9 @@ if SAVE_PNG || SAVE_MAT
         exportgraphics(tab1, fullfile(test_dir, 'tab1.png'), 'Resolution', export_res);
         exportgraphics(tab2, fullfile(test_dir, 'tab2.png'), 'Resolution', export_res);
         exportgraphics(tab3, fullfile(test_dir, 'tab3.png'), 'Resolution', export_res);
-        exportgraphics(tab4, fullfile(test_dir, 'tab4.png'), 'Resolution', export_res);
+        if exist('tab4', 'var')
+            exportgraphics(tab4, fullfile(test_dir, 'tab4.png'), 'Resolution', export_res);
+        end
         exportgraphics(tab5, fullfile(test_dir, 'tab5.png'), 'Resolution', export_res);
         exportgraphics(tab6, fullfile(test_dir, 'tab6.png'), 'Resolution', export_res);
 
@@ -569,6 +588,10 @@ if SAVE_PNG || SAVE_MAT
         result = build_result_struct(test_name, signal_type_name, channel, amplitude, ...
                                      d, fB_f, fB_c, fB_e, lambda_f, lambda_c, lambda_e, ...
                                      beta, sim_time, Ts, t, v_d, v_m, u, u_w1, elapsed_time);
+
+        % Add controller type info
+        result.config.controller_type = controller_type;
+        result.config.ControllerType = ControllerType;
 
         if strcmpi(signal_type_name, 'sine')
             result.config.frequency = frequency;
@@ -841,7 +864,9 @@ function result = build_result_struct(test_name, signal_type_name, channel, ampl
     result.data.v_d = v_d;
     result.data.v_m = v_m;
     result.data.u = u;
-    result.data.u_w1 = u_w1;
+    if ~isempty(u_w1)
+        result.data.u_w1 = u_w1;  % Only for model_base_ctrl
+    end
 
     result.meta.timestamp = datestr(now);
     result.meta.elapsed_time = elapsed_time;
