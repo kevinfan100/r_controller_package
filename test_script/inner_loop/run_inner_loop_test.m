@@ -17,10 +17,10 @@ test_name = 'test';    % 測試名稱（用於檔案命名）
 signal_type_name = 'sine';      % 'step' 或 'sine'
 
 % preview
-d = 2;  
+d = 0;  
 Channel = 2;                    % 激發通道 (1-6)
 Amplitude = 1;               % 振幅 [V]
-Frequency = 500;                % Sine 頻率 [Hz]
+Frequency = 1000;                % Sine 頻率 [Hz]
 Phase = 0;                      % Sine 相位 [deg]
 StepTime = 0;                 % Step 跳變時間 [s]
                              
@@ -913,6 +913,91 @@ if ENABLE_PLOT
         tab_axes.tab6 = tl6;
         fprintf('  ✓ Tab 6: Control Effort Full\n');
 
+        % === Tab 7: Vm vs Vd (with delay compensation) ===
+        % Vd 延遲 2 個 step，用於觀察相位補償效果
+        plot_delay = 2;  % samples to delay Vd for plotting (Vd[k-2] vs Vm[k])
+
+        tab7 = uitab(tabgroup, 'Title', 'Vm vs Vd');
+        ax7 = uiaxes(tab7);
+        ax7.Position = [80 80 700 700];
+        hold(ax7, 'on');
+
+        % 確保有足夠的數據點進行延遲
+        N_display = size(Vd_display, 1);
+        if N_display > plot_delay
+            % 繪製所有通道（Vd 延遲 plot_delay 個 step）
+            plot_handles_delayed = gobjects(6, 1);
+
+            draw_count = 0;
+            for ch = 1:6
+                if ch ~= Channel
+                    draw_count = draw_count + 1;
+                    lw = base_thick - (base_thick - base_thin) * (draw_count - 1) / 4;
+                    % Vd[k-delay] vs Vm[k]
+                    plot_handles_delayed(ch) = plot(ax7, ...
+                         Vd_display(1:N_display-plot_delay, Channel), ...
+                         Vm_display(plot_delay+1:N_display, ch), ...
+                         'Color', colors(ch, :), 'LineWidth', lw);
+                end
+            end
+            % 激勵通道最後畫（最上層）
+            plot_handles_delayed(Channel) = plot(ax7, ...
+                 Vd_display(1:N_display-plot_delay, Channel), ...
+                 Vm_display(plot_delay+1:N_display, Channel), ...
+                 'Color', colors(Channel, :), 'LineWidth', excited_linewidth);
+
+            xlabel(ax7, 'Vd (V)', 'FontSize', xlabel_fontsize+6, 'FontWeight', 'bold');
+            ylabel(ax7, 'Vm (V)', 'FontSize', ylabel_fontsize+6, 'FontWeight', 'bold');
+
+            ax7.LineWidth = 3.0;
+            ax7.FontSize = tick_fontsize+6;
+            ax7.FontWeight = 'bold';
+            ax7.Box = 'on';
+
+            if vm_vd_unified_axis
+                xlim(ax7, axis_lim);
+                ylim(ax7, axis_lim);
+                axis(ax7, 'square');
+                ax7.XTick = tick_values;
+                ax7.YTick = tick_values;
+            end
+
+            legend(ax7, plot_handles_delayed, {'P1', 'P2', 'P3', 'P4', 'P5', 'P6'}, ...
+                   'Location', 'southeast', 'FontSize', legend_fontsize+2);
+
+            % FFT 資訊標註（與 Tab 1 相同風格，但相位需加上延遲補償）
+            % 公式：phase(delay=N) = phase(delay=0) + N*theta
+            % 其中 theta = 2*pi*f*Ts * (180/pi) 度
+            if exist('magnitude_ratio', 'var') && exist('phase_lag', 'var')
+                % 計算延遲造成的相位偏移
+                theta_deg = 2 * pi * Frequency * Ts * (180 / pi);  % 1 step 的相位偏移（度）
+                phase_shift = plot_delay * theta_deg;  % N steps 的相位偏移
+
+                % 計算補償後的相位
+                phase_compensated = phase_lag(Channel) + phase_shift;
+
+                % 相位正規化到 [-180, 180]
+                while phase_compensated > 180
+                    phase_compensated = phase_compensated - 360;
+                end
+                while phase_compensated < -180
+                    phase_compensated = phase_compensated + 360;
+                end
+
+                annotation_str = sprintf('P%d Mag: %.2f%% Phase: %+.2f°', ...
+                                         Channel, magnitude_ratio(Channel)*100, phase_compensated);
+            else
+                annotation_str = sprintf('P%d Mag: N/A Phase: N/A', Channel);
+            end
+            title(ax7, annotation_str, 'FontSize', title_fontsize, 'FontWeight', 'bold');
+        else
+            title(ax7, 'Insufficient data for delayed plot', ...
+                  'FontSize', title_fontsize, 'FontWeight', 'bold');
+        end
+
+        tab_axes.tab7 = ax7;
+        fprintf('  ✓ Tab 7: Vm vs Vd\n');
+
     else
         % ═══════════════════════════════════════════════════════════════
         %                       STEP 模式
@@ -1098,6 +1183,8 @@ if SAVE_PNG || SAVE_MAT
             exportgraphics(tab5, fullfile(test_dir, 'tab5_Vm_full_time.png'), 'Resolution', export_resolution);
             % Tab 6: Control Effort Full
             exportgraphics(tab6, fullfile(test_dir, 'tab6_control_effort_full.png'), 'Resolution', export_resolution);
+            % Tab 7: Vm vs Vd
+            exportgraphics(tab7, fullfile(test_dir, 'tab7_Vm_Vd.png'), 'Resolution', export_resolution);
         else
             % Tab 1: Step Response
             exportgraphics(tab1, fullfile(test_dir, 'tab1_step_response.png'), 'Resolution', export_resolution);
