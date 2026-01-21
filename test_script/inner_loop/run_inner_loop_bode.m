@@ -32,12 +32,12 @@ frequencies = [10, 50, 100, ...
                125, 200, 250, 400, 500, ...
                625, 800, 1000, 1250, 2000];                 
 
-d_values = [0];
+d_values = [0, 2];
 
 % Vd Generator 設定
 signal_type_name = 'sine';
-Channel = 1;              % 激勵通道
-Amplitude = 0.1;            % 振幅 [V]
+Channel = 5;              % 激勵通道
+Amplitude = 1;            % 振幅 [V]
 Phase = 0;                % 相位 [deg]
 SignalType = 1;           % Sine mode
 
@@ -45,8 +45,8 @@ SignalType = 1;           % Sine mode
 T = 1e-5;                 % 採樣時間 [s] (100 kHz)
 
 fB_f = 1000;              
-fB_c = 300;              
-fB_e = 500;             
+fB_c = 1000;              
+fB_e = 5000;             
 
 % ==================== 計算控制器參數 ====================
 % 使用 model_base_ctrl_calc_params 計算所有控制器係數

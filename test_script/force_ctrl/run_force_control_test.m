@@ -41,7 +41,7 @@ test_name = 'force_control_test';
 % Select which controller to use:
 %   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'pi_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -51,6 +51,7 @@ signal_type = 'sine';           % 'sine' or 'step'
 % Force direction and magnitude
 force_direction = [1; 0; 0];    % Unit direction vector [Fx; Fy; Fz]
 force_amplitude = 5.0;          % Force amplitude [pN]
+force_offset    = 0.0;
 
 % Sine mode parameters
 force_frequency = 50;           % Force frequency [Hz]
@@ -81,7 +82,7 @@ step_sim_time = 0.5;            % Step mode simulation time [s]
 % Select signal generation mode:
 %   'hardware' - Simulate hardware constraint (1600 Hz generation + interpolation)
 %   'ideal'    - Direct 100 kHz generation (no interpolation delay)
-generation_mode = 'ideal';   % 'hardware' or 'ideal'
+generation_mode = 'hardware';   % 'hardware' or 'ideal'
 
 % Hardware mode parameters (only used when generation_mode = 'hardware')
 pos_update_rate = 1600;         % Position update frequency [Hz]
@@ -91,9 +92,15 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ide
 % ─────────────────────────────────────────────────────────────────────────
 % 1.6 R-Controller Parameters
 % ─────────────────────────────────────────────────────────────────────────
-fB_f = 3000;                    % Feedforward bandwidth [Hz]
+% Preview samples: d shifts vd forward by d*Ts seconds
+% To compensate hardware interpolation delay:
+%   - Linear interp + realtime: delay = 1.0 * Ts_pos = 625 us @ 1600 Hz
+%   - ZOH interp + realtime:    delay = 0.5 * Ts_pos = 312.5 us @ 1600 Hz
+% Example: d = 62 compensates ~625 us delay (62 * 10us = 620 us)
+d = 0;                          % Preview samples (feedforward lookahead)
+fB_f = 4000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
-fB_e = 16000;                    % Estimator bandwidth [Hz]
+fB_e = 16000;                   % Estimator bandwidth [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.7 PI Controller Parameters
@@ -185,6 +192,9 @@ if strcmpi(generation_mode, 'hardware')
 end
 if ControllerType == 1
     fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    if d > 0
+        fprintf('  Preview: d=%d samples (%.1f us lookahead)\n', d, d*Ts*1e6);
+    end
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
@@ -229,7 +239,7 @@ if strcmpi(generation_mode, 'hardware')
     % ─────────────────────────────────────────────────────────────────────
     f_d_low = zeros(N_pos, 3);
     if strcmpi(signal_type, 'sine')
-        envelope_low = force_amplitude * sin(2*pi*force_frequency*t_pos + deg2rad(force_phase));
+        envelope_low = force_amplitude * sin(2*pi*force_frequency*t_pos + deg2rad(force_phase)) + force_offset;
         f_d_low = envelope_low .* force_direction';
     else
         idx_step_low = t_pos >= step_time;
@@ -345,8 +355,22 @@ if USE_SIMULINK
     fprintf('【Simulink Simulation】\n');
     fprintf('────────────────────────\n');
 
-    % Prepare vd_timeseries for Simulink From Workspace block
-    vd_timeseries = timeseries(vd, t);
+    % ─────────────────────────────────────────────────────────────────────
+    % Apply Preview: shift vd time axis backward by d*Ts
+    % This allows the controller to "see" vd[k+d] at time k
+    % ─────────────────────────────────────────────────────────────────────
+    if d > 0
+        % Shift time axis: t_preview = t - d*Ts
+        % At simulation time t, Simulink will get vd value from t + d*Ts
+        t_preview = t - d * Ts;
+        fprintf('  Preview enabled: d=%d samples (%.1f us lookahead)\n', d, d*Ts*1e6);
+
+        % Create timeseries with shifted time axis
+        vd_timeseries = timeseries(vd, t_preview);
+    else
+        % No preview: use original time axis
+        vd_timeseries = timeseries(vd, t);
+    end
     vd_timeseries.Name = 'vd_external';
     assignin('base', 'vd_timeseries', vd_timeseries);
 
@@ -360,7 +384,7 @@ if USE_SIMULINK
     assignin('base', 'Frequency', force_frequency);
     assignin('base', 'Phase', 0);
     assignin('base', 'StepTime', 0);
-    assignin('base', 'd', 0);  % Preview samples
+    assignin('base', 'd', d);  % Preview samples
     assignin('base', 'params', ctrl_params);
 
     % Set controller type and parameters
@@ -719,11 +743,15 @@ if ENABLE_PLOT
         ];
 
         % Plot 6 channels: X=Vd, Y=Vm (swapped from previous)
+        % Apply plotting delay to Vd (visually test preview effect)
+        plot_delay = 2;  % samples to delay Vd for plotting (Vd[k-2] vs Vm[k])
+
         channel_labels = {'Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6'};
         plot_handles = gobjects(1, 6);
         for ch = 1:6
+            % Vd delayed by plot_delay samples, Vm unchanged
             plot_handles(ch) = plot(ax6, ...
-                vd(idx_plot_start:idx_plot_end, ch), ...
+                vd(idx_plot_start-plot_delay:idx_plot_end-plot_delay, ch), ...
                 vm(idx_plot_start:idx_plot_end, ch), ...
                 'Color', colors_6ch(ch,:), 'LineWidth', measurement_linewidth);
         end
@@ -733,9 +761,14 @@ if ENABLE_PLOT
         lims_v = [min(all_voltage(:)), max(all_voltage(:))];
         plot(ax6, lims_v, lims_v, 'k--', 'LineWidth', 1.5);
 
-        % Title with frequency
-        title(ax6, sprintf('Vm vs Vd (Freq: %.1f Hz)', force_frequency), ...
-            'FontSize', title_fontsize, 'FontWeight', 'bold');
+        % Title with frequency and plot delay info
+        if plot_delay > 0
+            title(ax6, sprintf('Vm vs Vd (Freq: %.1f Hz, Vd delayed %d steps)', force_frequency, plot_delay), ...
+                'FontSize', title_fontsize, 'FontWeight', 'bold');
+        else
+            title(ax6, sprintf('Vm vs Vd (Freq: %.1f Hz)', force_frequency), ...
+                'FontSize', title_fontsize, 'FontWeight', 'bold');
+        end
 
         % Set axis labels (matching reference font sizes: +4)
         xlabel(ax6, 'Vd [V]', 'FontSize', xlabel_fontsize+4, 'FontWeight', 'bold');
@@ -755,74 +788,90 @@ if ENABLE_PLOT
             'FontSize', legend_fontsize + 2, 'FontWeight', 'bold');
 
         fprintf('  Tab 6: Vm vs Vd Tracking (%d cycles)\n', cycles_for_plot);
-
-        % ───────────────────────────────────────────────────────────────────
-        % Tab 7: fd vs fm Tracking (TEMPORARY)
-        %        X: fd (excited direction only), Y: fm (all 3 directions)
-        %        Style: matching reference image
-        % ───────────────────────────────────────────────────────────────────
-        tab7 = uitab(tabgroup, 'Title', 'fm vs fd (TEMP)');
-        tab_handles.fd_vs_fm = tab7;
-
-        % Find the excited direction index (the one with largest component in force_direction)
-        [~, excited_axis] = max(abs(force_direction));
-        force_labels_short = {'X', 'Y', 'Z'};
-        force_colors = [0.0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.4660 0.6740 0.1880];
-
-        % Use the same 3-cycle window as Tab 6 (100 kHz data)
-        % idx_plot_start and idx_plot_end are already defined above
-
-        % Extract data (100 kHz interpolated data)
-        fd_excited = f_d(idx_plot_start:idx_plot_end, excited_axis);
-        fm_all = f_m(idx_plot_start:idx_plot_end, :);  % All 3 directions
-
-        % Create single axes for the plot
-        ax7 = uiaxes(tab7);
-        ax7.Position = [100 80 1200 750];
-        hold(ax7, 'on');
-
-        % Plot fm (all 3 directions) vs fd (excited) - X on fd axis, Y on fm axis
-        plot_handles_7 = gobjects(1, 3);
-        for i = 1:3
-            plot_handles_7(i) = plot(ax7, fd_excited, fm_all(:, i), ...
-                '-', 'Color', force_colors(i,:), 'LineWidth', 2.5);
-        end
-
-        % Add ideal reference line (y=x) as black dashed
-        axis_limit = force_amplitude * 1.05;
-        plot(ax7, [-axis_limit, axis_limit], [-axis_limit, axis_limit], ...
-            'k--', 'LineWidth', 1.5);
-
-        % Set axis limits
-        xlim(ax7, [-axis_limit, axis_limit]);
-        ylim(ax7, [-axis_limit, axis_limit]);
-
-        % Title
-        title(ax7, sprintf('fm vs fd (Freq: %.1f Hz)', force_frequency), ...
-            'FontSize', 16, 'FontWeight', 'bold');
-
-        % Set axis labels (bold, larger)
-        xlabel(ax7, 'fd [pN]', 'FontSize', 18, 'FontWeight', 'bold');
-        ylabel(ax7, 'fm [pN]', 'FontSize', 18, 'FontWeight', 'bold');
-
-        % Axis properties
-        ax7.FontSize = 14;
-        ax7.FontWeight = 'bold';
-        ax7.LineWidth = 2;  % Thicker frame
-        ax7.XColor = 'k';
-        ax7.YColor = 'k';
-        ax7.GridColor = [0.8 0.8 0.8];
-        ax7.GridAlpha = 1;
-        grid(ax7, 'on');
-        box(ax7, 'on');
-
-        % Legend at bottom right
-        legend(ax7, plot_handles_7, force_labels_short, ...
-            'Location', 'southeast', ...
-            'FontSize', 12, 'FontWeight', 'bold');
-
-        fprintf('  Tab 7: fm vs fd Tracking (Freq: %.1f Hz) (TEMPORARY)\n', force_frequency);
     end
+
+    % ═══════════════════════════════════════════════════════════════════════
+    % Tab: fm vs fd Tracking (always shown, both Simulink and Ideal modes)
+    %      X: fd (excited direction only), Y: fm (all 3 directions)
+    %      Style: matching reference image
+    % ═══════════════════════════════════════════════════════════════════════
+    tab_fm_fd = uitab(tabgroup, 'Title', 'fm vs fd');
+    tab_handles.fd_vs_fm = tab_fm_fd;
+
+    % Find the excited direction index (the one with largest component in force_direction)
+    [~, excited_axis] = max(abs(force_direction));
+    force_labels_short = {'X', 'Y', 'Z'};
+    force_colors = [0.0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.4660 0.6740 0.1880];
+
+    % Calculate 3-cycle window indices (from steady state)
+    cycles_for_plot = 3;
+    if strcmpi(signal_type, 'sine')
+        T_period = 1 / force_frequency;
+        % Start from skip_cycles, take 3 cycles
+        idx_plot_start = round(skip_cycles * T_period / Ts) + 1;
+        idx_plot_end = round((skip_cycles + cycles_for_plot) * T_period / Ts);
+        idx_plot_end = min(idx_plot_end, N);  % Clamp to array size
+    else
+        % Step mode: use steady-state portion
+        idx_plot_start = idx_display;
+        idx_plot_end = N;
+    end
+
+    % Extract data (100 kHz interpolated data)
+    fd_excited = f_d(idx_plot_start:idx_plot_end, excited_axis);
+    fm_all = f_m(idx_plot_start:idx_plot_end, :);  % All 3 directions
+
+    % Create single axes for the plot
+    ax_fm_fd = uiaxes(tab_fm_fd);
+    ax_fm_fd.Position = [100 80 1200 750];
+    hold(ax_fm_fd, 'on');
+
+    % Plot fm (all 3 directions) vs fd (excited) - X on fd axis, Y on fm axis
+    plot_handles_fm_fd = gobjects(1, 3);
+    for i = 1:3
+        plot_handles_fm_fd(i) = plot(ax_fm_fd, fd_excited, fm_all(:, i), ...
+            '-', 'Color', force_colors(i,:), 'LineWidth', 2.5);
+    end
+
+    % Add ideal reference line (y=x) as black dashed
+    axis_limit = force_amplitude * 1.05;
+    plot(ax_fm_fd, [-axis_limit, axis_limit], [-axis_limit, axis_limit], ...
+        'k--', 'LineWidth', 1.5);
+
+    % Set axis limits
+    xlim(ax_fm_fd, [-axis_limit, axis_limit]);
+    ylim(ax_fm_fd, [-axis_limit, axis_limit]);
+
+    % Title (include mode info)
+    if USE_SIMULINK
+        mode_str = controller_label;
+    else
+        mode_str = 'Ideal Tracking';
+    end
+    title(ax_fm_fd, sprintf('fm vs fd (Freq: %.1f Hz, %s)', force_frequency, mode_str), ...
+        'FontSize', 16, 'FontWeight', 'bold');
+
+    % Set axis labels (bold, larger)
+    xlabel(ax_fm_fd, 'fd [pN]', 'FontSize', 18, 'FontWeight', 'bold');
+    ylabel(ax_fm_fd, 'fm [pN]', 'FontSize', 18, 'FontWeight', 'bold');
+
+    % Axis properties
+    ax_fm_fd.FontSize = 14;
+    ax_fm_fd.FontWeight = 'bold';
+    ax_fm_fd.LineWidth = 2;  % Thicker frame
+    ax_fm_fd.XColor = 'k';
+    ax_fm_fd.YColor = 'k';
+    ax_fm_fd.GridColor = [0.8 0.8 0.8];
+    ax_fm_fd.GridAlpha = 1;
+    grid(ax_fm_fd, 'on');
+    box(ax_fm_fd, 'on');
+
+    % Legend at bottom right
+    legend(ax_fm_fd, plot_handles_fm_fd, force_labels_short, ...
+        'Location', 'southeast', ...
+        'FontSize', 12, 'FontWeight', 'bold');
+
+    fprintf('  Tab: fm vs fd Tracking (Freq: %.1f Hz)\n', force_frequency);
 
     % Store main figure handle for export
     fig_handles = struct('main', fig_main, 'tabs', tab_handles);

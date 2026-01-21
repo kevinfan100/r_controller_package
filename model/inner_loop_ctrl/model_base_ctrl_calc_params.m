@@ -65,7 +65,7 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     % vf[k] = λf*vf[k-1] + kff{ vd[k] - λcvd[k-1]}
     % ========================================
 
-    params.kff = (1 - lambda_f) / (1-lambda_c); % kff = 1 - λf/1 - λc
+    params.kff = (1 - lambda_f) / ((1-lambda_c) * (1 + params.b)); % temp zero phase
     params.one_S_bc = 1 - bc; % 1 - bc
 
     % ========================================

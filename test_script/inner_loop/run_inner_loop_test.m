@@ -17,10 +17,10 @@ test_name = 'test';    % 測試名稱（用於檔案命名）
 signal_type_name = 'sine';      % 'step' 或 'sine'
 
 % preview
-d = 0;  
-Channel = 1;                    % 激發通道 (1-6)
-Amplitude = 2;               % 振幅 [V]
-Frequency = 100;                % Sine 頻率 [Hz]
+d = 2;  
+Channel = 2;                    % 激發通道 (1-6)
+Amplitude = 1;               % 振幅 [V]
+Frequency = 500;                % Sine 頻率 [Hz]
 Phase = 0;                      % Sine 相位 [deg]
 StepTime = 0;                 % Step 跳變時間 [s]
                              
@@ -45,8 +45,8 @@ freq_error_threshold = 0.1;     % 頻率誤差警告閾值 (0.1%)
 T = 1e-5;
 
 fB_f = 1000;
-fB_c = 300;
-fB_e = 500;
+fB_c = 3200;
+fB_e = 16000;
 
 lambda_f = exp(-fB_f*T*2*pi);
 lambda_c = exp(-fB_c*T*2*pi);
@@ -253,6 +253,15 @@ assignin('base', 'Ki_value', Ki_value);
 % 控制器類型 (1=R-Controller, 2=PI-Controller)
 ControllerType = 1;
 assignin('base', 'ControllerType', ControllerType);
+
+% Vd_Generator 參數（內部信號生成用）
+assignin('base', 'SignalType', SignalType);
+assignin('base', 'Channel', Channel);
+assignin('base', 'Amplitude', Amplitude);
+assignin('base', 'Frequency', Frequency);
+assignin('base', 'Phase', Phase);
+assignin('base', 'StepTime', StepTime);
+assignin('base', 'd', d);  % Preview samples for Vd_Generator
 
 % 外部 vd 時間序列（內迴路測試不使用，但 Simulink 模型需要此變數）
 vd_timeseries = timeseries(zeros(2, 6), [0; sim_time]);

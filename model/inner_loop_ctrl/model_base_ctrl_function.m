@@ -1,21 +1,23 @@
 function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
-    % R Controller with Pre-calculated Parameters
-    %
-    % Implements R Controller using pre-calculated parameters from
-    % model_base_ctrl_calc_params(). This function contains ONLY the
-    % difference equations for real-time execution.
-    %
-    %
-    % Variable naming convention:
-    %   - Addition: A (e.g., one_A_beta = 1 + beta)
-    %   - Subtraction: S (e.g., one_S_bc = 1 - bc)
-    %   - Multiplication: M (e.g., b_M_lambda_c = b * lambda_c)
-    %   - Negative: neg_ (e.g., neg_beta = -beta)
+% MODEL_BASE_CTRL_FUNCTION R Controller with pre-calculated parameters
+%
+% Implements R Controller using pre-calculated parameters from
+% model_base_ctrl_params(). This function contains ONLY the
+% difference equations for real-time execution.
+%
+% Inputs:
+%   vd     - Desired voltage (6x1) [V]
+%   vm     - Measured voltage (6x1) [V]
+%   params - Controller parameters from model_base_ctrl_params()
+%
+% Outputs:
+%   u     - Control output (6x1) [A]
+%   u_w1  - Disturbance compensation output (6x1) [A]
+%
+% See also: model_base_ctrl_params, CLAUDE.md
 
-    % ====================================================================
-    % PERSISTENT STATE VARIABLES
-    % ====================================================================
-    persistent vd_k1           
+    %% Persistent State Variables
+    persistent vd_k1 vd_k2            
     persistent vf_k1 vf_k2           
     persistent delta_v_k1            
     persistent delta_v_hat_k1        
@@ -25,12 +27,11 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     persistent uc_w1_k1 uc_w1_k2
     persistent initialized
 
-    % ====================================================================
-    % INITIALIZATION
-    % ====================================================================
+    %% Initialization
     if isempty(initialized)
         initialized = true;
         vd_k1 = zeros(6, 1);
+        vd_k2 = zeros(6, 1);
         vf_k1 = zeros(6, 1);
         vf_k2 = zeros(6, 1);
         delta_v_k1 = zeros(6, 1);
@@ -46,21 +47,17 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
         uc_w1_k2 = zeros(6, 1);
     end
 
-    % ====================================================================
-    % FEEDFORWARD FILTER (vf calculation)
-    % vf[k] = λf*vf[k-1] + kff{ vd[k] - λc*vd[k-1]}
-    % ====================================================================
-    vf_k = params.lambda_f * vf_k1 + params.kff * (vd - params.lambda_c * vd_k1);
+    %% Feedforward Filter (temp zero phase)
+    % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-λc*b)*vd[k-1] - λc*vd[k-2]}
+    vf_k = params.lambda_f * vf_k1 + params.kff * (params.b * vd + (1 - params.lambda_c * params.b) * vd_k1 - params.lambda_c * vd_k2);
 
-    % δvf[k] = vf[k] - (1-bc)·vf[k-1] - bc·vf[k-2]
-    delta_vf = vf_k - params.one_S_bc * vf_k1 - params.bc * vf_k2;
+    % δvf[k] = vf[k] - (λc+kc)·vf[k-1] - bc·vf[k-2] (temp zero phase)
+    delta_vf = vf_k - (params.lambda_c + params.kc) * vf_k1 - params.bc * vf_k2;
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;
 
-    % ====================================================================
-    % ESTIMATOR (disturbance observer)
-    % ====================================================================
+    %% Estimator (Disturbance Observer)
     error_term = delta_v_k1 - delta_v_hat_k1;
 
     % δv̂[k] = λc·δv̂[k-1] + δvf[k] + L1·{δv[k-1] - δv̂[k-1]}
@@ -72,9 +69,7 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     % ŵ2[k] = ŵ1[k-1] + L3·{δv[k-1] - δv̂[k-1]}
     w2_hat = w1_hat_k1 + params.L3 * error_term;
 
-    % ====================================================================
-    % CONTROL LAW
-    % ====================================================================
+    %% Control Law
     % δvc[k] = δv[k] - ŵ1[k]
     delta_vc = delta_v - w1_hat;
 
@@ -92,9 +87,8 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     % u[k] = B^-1 · uc_w1[k]
     u_w1 = params.B_inv * uc_w1;
 
-    % ====================================================================
-    % STATE UPDATES
-    % ====================================================================
+    %% State Updates
+    vd_k2 = vd_k1;
     vd_k1 = vd;
     vf_k2 = vf_k1;
     vf_k1 = vf_k;
