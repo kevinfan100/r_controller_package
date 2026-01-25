@@ -709,11 +709,74 @@ if ENABLE_PLOT
     fprintf('  Tab 2: Inverse Model Output (vd)\n');
 
     % ═══════════════════════════════════════════════════════════════════════
-    % Tab 2.5: Interpolation Detail (only for hardware mode + Ideal Tracking)
+    % Tab 2.5: Vd Spectrum (only for sine mode)
+    % FFT analysis of vd, normalized to fundamental frequency
+    % ═══════════════════════════════════════════════════════════════════════
+    if strcmpi(signal_type_original, 'sine')
+        tab_spectrum = uitab(tabgroup, 'Title', 'Vd Spectrum');
+        tab_handles.vd_spectrum = tab_spectrum;
+
+        % Use steady-state data for FFT
+        vd_steady = vd(idx_start:end, :);
+        N_fft = size(vd_steady, 1);
+        fs = 1 / Ts;  % 100 kHz
+
+        % Compute FFT for each channel
+        freq_axis = (0:N_fft-1) * fs / N_fft;
+        half_N = floor(N_fft / 2);
+        freq_half = freq_axis(1:half_N);
+
+        % Find fundamental frequency bin
+        [~, fund_idx] = min(abs(freq_half - force_frequency));
+
+        % Create 3x2 layout
+        tl_spectrum = tiledlayout(tab_spectrum, 3, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl_spectrum, 'Vd Spectrum', 'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+        for ch = 1:6
+            ax = nexttile(tl_spectrum);
+
+            % Compute FFT magnitude
+            Y = fft(vd_steady(:, ch));
+            mag = abs(Y(1:half_N)) / N_fft * 2;  % Single-sided amplitude
+
+            % Get fundamental amplitude for normalization (in mV)
+            fund_amp_V = mag(fund_idx);
+            fund_amp_mV = fund_amp_V * 1000;
+
+            % Normalize to fundamental
+            mag_norm = mag / fund_amp_V;
+
+            % Plot with black color, log X axis
+            plot(ax, freq_half, mag_norm, 'k-', 'LineWidth', 1.5);
+
+            % Set log scale and limits
+            set(ax, 'XScale', 'log');
+            xlim(ax, [10, 10000]);
+            ylim(ax, [0, 1.1]);
+
+            % Labels - no Y axis label
+            xlabel(ax, 'Frequency [Hz]', 'FontSize', xlabel_fontsize);
+
+            % Title with channel and fundamental amplitude in mV
+            title(ax, sprintf('P%d (%.1f)', ch, fund_amp_mV), ...
+                'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+
+            ax.FontSize = tick_fontsize;
+            ax.LineWidth = axis_linewidth;
+            grid(ax, 'on');
+            box(ax, 'on');
+        end
+
+        fprintf('  Tab 2.5: Vd Spectrum (6 channels)\n');
+    end
+
+    % ═══════════════════════════════════════════════════════════════════════
+    % Tab 2.6: Interpolation Detail (only for hardware mode + Ideal Tracking)
     % Shows 1-2 periods of 1600 Hz with all 100 kHz interpolation points
     % ═══════════════════════════════════════════════════════════════════════
     if strcmpi(generation_mode, 'hardware') && ~USE_SIMULINK
-        tab_interp = uitab(tabgroup, 'Title', 'Interpolation Detail');
+        tab_interp = uitab(tabgroup, 'Title', 'Interp Detail');
         tab_handles.interpolation_detail = tab_interp;
 
         % Calculate time range for 2 periods of 1600 Hz
@@ -793,7 +856,7 @@ if ENABLE_PLOT
         fprintf('    Max Error %%: [%.2f%%, %.2f%%, %.2f%%] of amplitude\n', ...
             interp_error_max_pct(1), interp_error_max_pct(2), interp_error_max_pct(3));
 
-        fprintf('  Tab: Interpolation Detail (%.0f periods @ 1600 Hz)\n', num_periods_to_show);
+        fprintf('  Tab 2.6: Interpolation Detail (%.0f periods @ 1600 Hz)\n', num_periods_to_show);
     end
 
     % ═══════════════════════════════════════════════════════════════════════
@@ -1371,12 +1434,22 @@ if SAVE_MAT || SAVE_PNG
                 drawnow; pause(0.1);
                 exportgraphics(tab2, fullfile(test_dir, 'tab2_inverse_model.png'), 'Resolution', export_resolution);
 
+                % Tab 2.5: Vd Spectrum (only for sine mode)
+                if strcmpi(signal_type_original, 'sine') && isfield(tab_handles, 'vd_spectrum')
+                    tabgroup.SelectedTab = tab_spectrum;
+                    drawnow; pause(0.1);
+                    exportgraphics(tab_spectrum, fullfile(test_dir, 'tab2_5_vd_spectrum.png'), 'Resolution', export_resolution);
+                end
+
                 % Tab 3: Error Analysis
                 tabgroup.SelectedTab = tab3;
                 drawnow; pause(0.1);
                 exportgraphics(tab3, fullfile(test_dir, 'tab3_error_analysis.png'), 'Resolution', export_resolution);
 
                 tab_count = 3;
+                if strcmpi(signal_type_original, 'sine')
+                    tab_count = tab_count + 1;  % Vd Spectrum
+                end
 
                 % Additional tabs for Simulink mode
                 if USE_SIMULINK
