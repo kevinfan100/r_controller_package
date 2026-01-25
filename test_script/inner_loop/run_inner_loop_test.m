@@ -22,7 +22,7 @@ addpath(fullfile(package_root, 'test_script', 'utils'));
 %% Configuration
 
 test_name = 'test';
-signal_type_name = 'sine';          % 'step' or 'sine'
+signal_type_name = 'step';          % 'step' or 'sine'
 
 % Controller type: 'model_base_ctrl' or 'pi_ctrl'
 controller_type = 'model_base_ctrl';
@@ -31,7 +31,7 @@ controller_type = 'model_base_ctrl';
 d = 0;                              % Preview steps
 channel = 3;                        % Excitation channel (1-6)
 amplitude = 2;                      % Amplitude [V]
-frequency = 100;                    % Sine frequency [Hz]
+frequency = 500;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
@@ -44,8 +44,8 @@ styles = plot_styles();
 
 % R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
 fB_f = 3000;
-fB_c = 300;
-fB_e = 500;
+fB_c = 1000;
+fB_e = 5000;
 
 % PI controller parameters (used when controller_type = 'pi_ctrl')
 Kp_value = config.Kp_default;
@@ -59,7 +59,8 @@ ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f);
 ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
 
 % Compute lambda values (used for display and result struct)
-lambda_f = exp(-fB_f * Ts * 2 * pi);
+%lambda_f = exp(-fB_f * Ts * 2 * pi);
+lambda_f = 0;  % Zero Phase Feedforward: λf = 0
 lambda_c = exp(-fB_c * Ts * 2 * pi);
 lambda_e = exp(-fB_e * Ts * 2 * pi);
 beta = sqrt(lambda_e * lambda_c);

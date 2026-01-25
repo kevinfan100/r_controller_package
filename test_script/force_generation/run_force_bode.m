@@ -41,7 +41,7 @@ addpath(fullfile(package_root, 'test_script', 'utils'));
 % Select which controller to use:
 %   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'pi_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
 
 % -------------------------------------------------------------------------
 % 1.2 Force Direction (single axis)
@@ -99,8 +99,8 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay for linear)
 % 1.7 R-Controller Bandwidth
 % -------------------------------------------------------------------------
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
-fB_c = 1000;                    % Controller bandwidth [Hz]
-fB_e = 5000;                    % Estimator bandwidth [Hz]
+fB_c = 3200;                    % Controller bandwidth [Hz]
+fB_e = 16000;                    % Estimator bandwidth [Hz]
 
 % -------------------------------------------------------------------------
 % 1.8 PI Controller Parameters
