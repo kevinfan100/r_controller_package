@@ -32,15 +32,18 @@ frequencies = config.inner_loop_frequencies;
 
 % Signal parameters
 d = 0;
-channel = 1;
-amplitude = 0.1;
+channel = 2;
+amplitude = 2;
 
-% Controller bandwidths
+% Controller selection: 1 = R-Controller, 2 = PI Controller
+USE_PI_CONTROLLER = false;  % Set to true for PI controller test
+
+% R-Controller bandwidths
 fB_f = 1000;
-fB_c = 300;
-fB_e = 500;
+fB_c = 3200;
+fB_e = 16000;
 
-% PI controller parameters (for backup)
+% PI controller parameters
 Kp_value = config.Kp_default;
 Ki_value = config.Ki_default;
 Ts = config.Ts;
@@ -60,16 +63,24 @@ SAVE_RESULTS = true;
 
 fprintf('\n');
 fprintf('================================================================\n');
-fprintf('           R Controller Frequency Response Test (Bode Plot)\n');
+if USE_PI_CONTROLLER
+    fprintf('         PI Controller Frequency Response Test (Bode Plot)\n');
+else
+    fprintf('          R Controller Frequency Response Test (Bode Plot)\n');
+end
 fprintf('================================================================\n\n');
 
 fprintf('[Configuration]\n');
 fprintf('------------------------\n');
+if USE_PI_CONTROLLER
+    fprintf('  Controller: PI (Kp=%.1f, Ki=%.1f)\n', Kp_value, Ki_value);
+else
+    fprintf('  Controller: R-Controller (fB: f=%d, c=%d, e=%d Hz)\n', fB_f, fB_c, fB_e);
+end
 fprintf('  Frequency range: %.0f Hz ~ %.0f Hz (%d points)\n', ...
         frequencies(1), frequencies(end), length(frequencies));
 fprintf('  Excited channel: P%d\n', channel);
 fprintf('  Amplitude: %.2f V\n', amplitude);
-fprintf('  fB: f=%d Hz, c=%d Hz, e=%d Hz\n', fB_f, fB_c, fB_e);
 fprintf('  Total cycles: %d (skip %d, analyze %d)\n', ...
         config.total_cycles, config.skip_cycles, config.fft_cycles);
 fprintf('  Model parameter b: %.4f\n\n', b_value);
@@ -159,7 +170,13 @@ for freq_idx = 1:num_freq
     % Controller parameters (both are needed)
     assignin('base', 'model_base_ctrl_params', ctrl_params_model_base);
     assignin('base', 'pi_ctrl_params', ctrl_params_pi);
-    assignin('base', 'ControllerType', config.controller_type_enum.MODEL_BASE_CTRL);
+
+    % Select controller type
+    if USE_PI_CONTROLLER
+        assignin('base', 'ControllerType', config.controller_type_enum.PI_CTRL);
+    else
+        assignin('base', 'ControllerType', config.controller_type_enum.MODEL_BASE_CTRL);
+    end
 
     % signal_type: 1=Signal mode (inner loop test)
     assignin('base', 'signal_type', 1);
@@ -278,23 +295,59 @@ end
 
 %% Compute Theory Curves
 
-kf = (1 - lambda_f) / (1 + b_value);
 freq_theory = logspace(0, log10(4000), 500);
-
 A_theory = zeros(size(freq_theory));
 phi_theory = zeros(size(freq_theory));
 
-for i = 1:length(freq_theory)
-    theta = 2 * pi * freq_theory(i) * config.Ts;
+% 系統實際延遲（純模擬中無延遲 = 0，preview 是用來補償延遲的）
+system_delay = 0;
 
-    % Magnitude function A(theta; lambda_f, b)
-    A_theory(i) = kf * sqrt((1 + 2*b_value*cos(theta) + b_value^2) / ...
-                            (1 - 2*lambda_f*cos(theta) + lambda_f^2));
+if ~USE_PI_CONTROLLER
+    % ─────────────────────────────────────────────────────────────────────
+    % R-Controller: Zero Phase Feedforward 理論曲線
+    % ─────────────────────────────────────────────────────────────────────
+    lambda_f = 0;
+    kf = (1 - lambda_f) / (1 + b_value)^2;
 
-    % Phase function phi(theta; lambda_f, b)
-    phi_theory(i) = -(theta + ...
-                      atan2(b_value*sin(theta), 1 + b_value*cos(theta)) + ...
-                      atan2(lambda_f*sin(theta), 1 - lambda_f*cos(theta)));
+    for i = 1:length(freq_theory)
+        theta = 2 * pi * freq_theory(i) * config.Ts;
+        % Zero Phase Feedforward: A(θ) = kf * (1 + 2b*cos(θ) + b²)
+        A_theory(i) = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+        % Zero Phase Feedforward: φ(θ) = -(2 + d) * θ
+        phi_theory(i) = -(2 + system_delay) * theta;
+    end
+    theory_label = 'Theory (R-Ctrl)';
+else
+    % ─────────────────────────────────────────────────────────────────────
+    % PI Controller: 閉環傳遞函數理論曲線
+    % Plant: H(z) = k_o * (1 + b*z^-1) / (1 - a1*z^-1 - a2*z^-2)
+    % PI: C(z) = Kp + Ki*Ts*z^-1/(1-z^-1)
+    % Closed-loop: T(z) = C(z)*H(z) / (1 + C(z)*H(z))
+    % ─────────────────────────────────────────────────────────────────────
+    k_o = ctrl_params_model_base.Value.k_o;
+    a1 = ctrl_params_model_base.Value.a1;
+    a2 = ctrl_params_model_base.Value.a2;
+
+    for i = 1:length(freq_theory)
+        w = 2 * pi * freq_theory(i);
+        z = exp(1j * w * Ts);
+
+        % Plant transfer function H(z)
+        H_plant = k_o * (1 + b_value / z) / (1 - a1 / z - a2 / z^2);
+
+        % PI controller: C(z) = Kp + Ki*Ts/(1 - z^-1)
+        C_pi = Kp_value + Ki_value * Ts / (1 - 1/z);
+
+        % Closed-loop transfer function
+        L = C_pi * H_plant;
+        T_closed = L / (1 + L);
+
+        A_theory(i) = abs(T_closed);
+        phi_theory(i) = angle(T_closed);
+    end
+    theory_label = 'Theory (PI)';
+    lambda_f = NaN;  % Not applicable for PI
+    kf = NaN;
 end
 
 phi_theory_deg = phi_theory * (180/pi);
@@ -309,19 +362,28 @@ results.phase_lag = phase_lag_all;
 results.magnitude_dB = 20 * log10(magnitude_ratio_all);
 results.sim_times = sim_times;
 results.channel = channel;
-results.fB_c = fB_c;
-results.fB_e = fB_e;
-results.fB_f = fB_f;
+results.USE_PI_CONTROLLER = USE_PI_CONTROLLER;
+
+if USE_PI_CONTROLLER
+    results.controller_type = 'PI';
+    results.Kp = Kp_value;
+    results.Ki = Ki_value;
+else
+    results.controller_type = 'R-Controller';
+    results.fB_c = fB_c;
+    results.fB_e = fB_e;
+    results.fB_f = fB_f;
+end
 
 % Theory comparison
 results.theory.b_value = b_value;
-results.theory.lambda_f = lambda_f;
 results.theory.freq_theory = freq_theory;
 results.theory.A_theory = A_theory;
 results.theory.phi_theory_deg = phi_theory_deg;
+results.theory.label = theory_label;
 
-% Error analysis
-H_theory_exp = compute_theory_magnitude(frequencies, config.Ts, kf, b_value, lambda_f);
+% Error analysis (compare experiment with theory at experiment frequencies)
+H_theory_exp = interp1(freq_theory, A_theory, frequencies, 'linear', 'extrap');
 error_percent = abs(magnitude_ratio_all(:, channel) - H_theory_exp') ./ H_theory_exp' * 100;
 results.theory.H_magnitude = H_theory_exp;
 results.theory.error_percent = error_percent;
@@ -340,7 +402,8 @@ fprintf('================================================================\n\n');
 
 fig_bode = create_bode_plot(frequencies, magnitude_ratio_all, phase_lag_all, ...
                             freq_theory, A_theory, phi_theory_deg, ...
-                            channel, fB_f, styles);
+                            channel, styles, theory_label, USE_PI_CONTROLLER, ...
+                            fB_f, Kp_value, Ki_value);
 fprintf('  Bode plot created\n');
 
 %% Display Analysis Results
@@ -377,7 +440,11 @@ phase_ch = results.phase_lag(:, channel);
 fprintf('  Phase range: %.2f to %.2f deg\n', min(phase_ch), max(phase_ch));
 
 % Theory comparison
-fprintf('\n[Theory Comparison (b = %.4f)]\n', b_value);
+if USE_PI_CONTROLLER
+    fprintf('\n[Theory Comparison (PI: Kp=%.1f, Ki=%.1f)]\n', Kp_value, Ki_value);
+else
+    fprintf('\n[Theory Comparison (R-Ctrl: b = %.4f)]\n', b_value);
+end
 fprintf('  Max error: %.2f%%\n', results.theory.max_error_percent);
 fprintf('  Mean error: %.2f%%\n', results.theory.mean_error_percent);
 fprintf('  RMS error: %.2f%%\n\n', results.theory.rms_error_percent);
@@ -428,9 +495,13 @@ fprintf('                     Test Completed\n');
 fprintf('================================================================\n\n');
 
 fprintf('[Summary]\n');
-fprintf('  Controller: R-Controller (d=%d)\n', d);
+if USE_PI_CONTROLLER
+    fprintf('  Controller: PI (Kp=%.1f, Ki=%.1f)\n', Kp_value, Ki_value);
+else
+    fprintf('  Controller: R-Controller (d=%d)\n', d);
+    fprintf('  Bandwidths: fB_c=%d Hz, fB_e=%d Hz, fB_f=%d Hz\n', fB_c, fB_e, fB_f);
+end
 fprintf('  Excited channel: P%d\n', channel);
-fprintf('  Bandwidths: fB_c=%d Hz, fB_e=%d Hz, fB_f=%d Hz\n', fB_c, fB_e, fB_f);
 fprintf('  Frequency range: %.0f ~ %.0f Hz (%d points)\n', ...
         frequencies(1), frequencies(end), num_freq);
 fprintf('  Total simulation time: %.2f min\n\n', sum(sim_times)/60);
@@ -530,16 +601,6 @@ function save_diagnostic_plots(qc, v_m, freq, period, Ts, diagnostic_dir)
     end
 end
 
-function H = compute_theory_magnitude(frequencies, Ts, kf, b, lambda_f)
-% Compute theoretical magnitude at experiment frequencies
-    H = zeros(size(frequencies));
-    for i = 1:length(frequencies)
-        theta = 2 * pi * frequencies(i) * Ts;
-        H(i) = kf * sqrt((1 + 2*b*cos(theta) + b^2) / ...
-                         (1 - 2*lambda_f*cos(theta) + lambda_f^2));
-    end
-end
-
 function [steady_rate, thd_rate, dc_rate, overall_rate] = compute_quality_stats(qc_results, ch, num_freq)
 % Compute quality check pass rates for a channel
     steady_count = 0;
@@ -572,10 +633,15 @@ end
 
 function fig = create_bode_plot(frequencies, mag_ratio, phase_lag, ...
                                 freq_theory, A_theory, phi_theory_deg, ...
-                                channel, fB_f, styles)
+                                channel, styles, theory_label, USE_PI, ...
+                                fB_f, Kp, Ki)
 % Create Bode plot figure
-    fig = figure('Name', sprintf('Frequency Response fB_f=%.0fHz (P%d)', fB_f, channel), ...
-                 'Position', [100, 100, 1200, 800]);
+    if USE_PI
+        fig_title = sprintf('PI Controller (Kp=%.1f, Ki=%.1f) - P%d', Kp, Ki, channel);
+    else
+        fig_title = sprintf('R-Controller (fB_f=%.0fHz) - P%d', fB_f, channel);
+    end
+    fig = figure('Name', fig_title, 'Position', [100, 100, 1200, 800]);
 
     colors = styles.channel_colors;
     markers = styles.channel_markers;
@@ -590,7 +656,7 @@ function fig = create_bode_plot(frequencies, mag_ratio, phase_lag, ...
     % Theory curve (solid line)
     h_theory = semilogx(freq_theory, A_theory, '-', ...
                         'LineWidth', lw, 'Color', theory_color, ...
-                        'DisplayName', 'Theory');
+                        'DisplayName', theory_label);
 
     % Experiment data (dashed lines with markers)
     h_ch = gobjects(6, 1);
@@ -623,7 +689,7 @@ function fig = create_bode_plot(frequencies, mag_ratio, phase_lag, ...
     ax1.Box = 'on';
 
     % Legend
-    legend([h_ch; h_theory], [styles.channel_labels, {'Theory'}], ...
+    legend([h_ch; h_theory], [styles.channel_labels, {theory_label}], ...
            'Location', 'northoutside', 'NumColumns', 7, ...
            'FontSize', styles.bode_legend_fontsize, 'FontWeight', 'bold', ...
            'Orientation', 'horizontal');
@@ -635,7 +701,7 @@ function fig = create_bode_plot(frequencies, mag_ratio, phase_lag, ...
     % Theory curve
     semilogx(freq_theory, phi_theory_deg, '-', ...
              'LineWidth', lw, 'Color', theory_color, ...
-             'DisplayName', 'Theory');
+             'DisplayName', theory_label);
 
     % Experiment data (excited channel)
     semilogx(frequencies, phase_lag(:, channel), ['--' markers{channel}], ...
