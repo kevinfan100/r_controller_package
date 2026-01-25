@@ -1,12 +1,9 @@
-function v_d = inverse_model_function(f_d, pos_m_ext, params)
+function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
 % INVERSE_MODEL_FUNCTION Desired force -> Desired Hall voltage with rate transition
 %
 % Simulink-compatible inverse model with built-in rate transition.
-% Supports both static pos_m (from params) and dynamic pos_m (from external).
-% Phase counter is managed internally using persistent variables.
-%
-% This function implements the 8-stage Inverse Model pipeline plus
-% rate transition logic for simulating hardware constraints.
+% This version interpolates f_d (instead of vd) to match Ideal Tracking behavior.
+% Uses fixed 625 µs period (62.5 steps @ 100kHz) to match FPGA Vd_Interpolator.
 %
 % Inputs:
 %   f_d        - Desired force (3x1), Measuring coordinate [pN]
@@ -14,7 +11,7 @@ function v_d = inverse_model_function(f_d, pos_m_ext, params)
 %   params     - Parameters from force_model_allocation_params('Simulink', true)
 %                Required fields:
 %                .pos_m            - Bead position (3x1) [um] (used when pos_m_source=0)
-%                .pos_m_source     - 0=static (from params), 1=dynamic (from pos_m_ext)
+%                .pos_m_source     - 0=static (from params), 1=dynamic (from external)
 %                .sample_rate_mode - 1=ZOH, 2=Linear, 3=Direct
 %                .T_m2a            - Measuring to Actuator transform (3x3)
 %                .g_H              - Force gain [pN/V^2]
@@ -23,29 +20,33 @@ function v_d = inverse_model_function(f_d, pos_m_ext, params)
 %                .DH_hat_inv_KI    - Pre-computed D_H_hat^-1 * K_I (6x6)
 %                .LUT              - Pre-loaded LUT data (6 x 1891 x 10)
 %
-% Output:
-%   v_d    - Desired Hall sensor voltage (6x1) [V]
+% Outputs:
+%   v_d        - Desired Hall sensor voltage (6x1) [V]
+%   f_d_interp - Interpolated desired force (3x1) [pN], for verification
 %
 % Rate Transition Modes:
-%   1 (ZOH)    - Zero-order hold at 1600 Hz
-%   2 (Linear) - Linear interpolation at 1600 Hz (default)
-%   3 (Direct) - Direct execution at 100 kHz
+%   1 (ZOH)    - Zero-order hold f_d at 1600 Hz, compute vd every step
+%   2 (Linear) - Linear interpolation of f_d at 1600 Hz, compute vd every step
+%   3 (Direct) - Direct execution at 100 kHz (no rate transition)
 %
-% Dynamic pos_m Mode (pos_m_source=1):
-%   When integrated with Particle Dynamics, pos_m_ext comes from the
-%   particle position output at 1600 Hz, enabling position-dependent
-%   force allocation in closed-loop motion control.
+% Interpolation Method (FPGA-compatible):
+%   - Fixed frame_period = 62.5 steps (matches FPGA: 62500 @ 100MHz / 1000 divider)
+%   - Alpha = phase_counter / 62.5, range [0, ~0.992]
+%   - Boundary detection uses fractional accumulator for precise 1600 Hz
 %
 % See also: force_model_allocation_params, inverse_model, CLAUDE.md
 
 %#codegen
 
-    persistent vd_prev vd_curr phase_counter initialized
+    persistent fd_prev fd_curr phase_counter initialized first_boundary
+    persistent phase_accumulator  % Fractional accumulator for precise 1600 Hz boundary
 
     if isempty(initialized)
-        vd_prev = zeros(6, 1);
-        vd_curr = zeros(6, 1);
-        phase_counter = 0;
+        fd_prev = zeros(3, 1);
+        fd_curr = zeros(3, 1);
+        phase_counter = int32(0);
+        phase_accumulator = 0.0;  % Accumulates fractional part
+        first_boundary = true;
         initialized = true;
     end
 
@@ -58,41 +59,62 @@ function v_d = inverse_model_function(f_d, pos_m_ext, params)
     end
     sample_rate_mode = params.sample_rate_mode;
 
-    %% Rate Transition Constants
-    % 100 kHz / 1600 Hz = 62.5, use 63 for integer cycle
-    PHASE_PERIOD = 63;
-    INTERP_RATIO = 62.5;
+    %% Rate Transition Constants (FPGA-compatible)
+    % 100 kHz / 1600 Hz = 62.5 steps per frame
+    % FPGA uses: frame_period = 62500 @ 100MHz, output_divider = 1000
+    % Equivalent: 62500 / 1000 = 62.5 steps @ 100kHz
+    FRAME_PERIOD = 62.5;
 
-    %% Check if at 1600 Hz boundary
-    is_boundary = (phase_counter == 0);
+    %% Check if at 1600 Hz boundary (using fractional accumulator)
+    % Boundary occurs when phase_accumulator crosses integer threshold
+    is_boundary = (phase_counter == int32(0));
 
-    %% Calculate vd at 1600 Hz boundary or Direct mode
-    if sample_rate_mode == 3 || is_boundary
-        vd_raw = inverse_model_core(f_d, pos_m, params);
-
-        if sample_rate_mode ~= 3
-            vd_prev = vd_curr;
-            vd_curr = vd_raw;
+    %% Update f_d boundary values at 1600 Hz rate
+    if sample_rate_mode ~= 3 && is_boundary
+        if first_boundary
+            % First boundary: eliminate startup transient
+            % Set both prev and curr to current f_d to avoid zero-start ramp
+            fd_prev = f_d;
+            fd_curr = f_d;
+            first_boundary = false;
+        else
+            fd_prev = fd_curr;
+            fd_curr = f_d;
         end
     end
 
-    %% Rate Transition Output
+    %% Interpolate f_d based on sample rate mode
     if sample_rate_mode == 1
-        % ZOH mode: hold current value
-        v_d = vd_curr;
+        % ZOH mode: hold current boundary value
+        f_d_interp = fd_curr;
 
     elseif sample_rate_mode == 2
-        % Linear Interpolation mode
-        t_frac = double(phase_counter) / INTERP_RATIO;
-        v_d = vd_prev + t_frac * (vd_curr - vd_prev);
+        % Linear Interpolation mode: interpolate f_d
+        % Alpha calculation matches FPGA: alpha = frame_counter / frame_period
+        t_frac = double(phase_counter) / FRAME_PERIOD;
+        if t_frac > 1.0
+            t_frac = 1.0;  % Clamp to [0, 1]
+        end
+        f_d_interp = fd_prev + t_frac * (fd_curr - fd_prev);
 
     else
-        % Direct mode (100 kHz): compute every step
-        v_d = inverse_model_core(f_d, pos_m, params);
+        % Direct mode (100 kHz): use input f_d directly
+        f_d_interp = f_d;
     end
 
-    %% Increment phase counter for next call
-    phase_counter = mod(phase_counter + 1, PHASE_PERIOD);
+    %% Compute v_d using interpolated f_d (every step!)
+    v_d = inverse_model_core(f_d_interp, pos_m, params);
+
+    %% Increment phase counter with fractional accumulator (FPGA-compatible)
+    % This achieves precise 1600 Hz average by accumulating the 0.5 remainder
+    phase_accumulator = phase_accumulator + 1.0;
+    phase_counter = phase_counter + int32(1);
+
+    % Check for frame boundary: when accumulator reaches FRAME_PERIOD
+    if phase_accumulator >= FRAME_PERIOD
+        phase_accumulator = phase_accumulator - FRAME_PERIOD;  % Keep fractional remainder
+        phase_counter = int32(0);
+    end
 
 end
 
