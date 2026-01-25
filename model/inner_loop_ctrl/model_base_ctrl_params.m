@@ -36,7 +36,7 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     params.B_inv = inv(B);
 
     %% Intermediate Parameters
-    lambda_f = exp(-fB_f * 2 * pi * params.T);
+    lambda_f = 0;  % Zero Phase Feedforward: λf = 0
     lambda_c = exp(-fB_c * 2 * pi * params.T);
     lambda_e = exp(-fB_e * 2 * pi * params.T);
 
@@ -56,7 +56,7 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
 
     %% Feedforward Filter Coefficients
     % vf[k] = λf*vf[k-1] + kff{ vd[k] - λcvd[k-1]}
-    params.kff = (1 - lambda_f) / ((1-lambda_c) * (1 + params.b)); % kff = 1 - λf/1 - λc temp change
+    params.kff = (1 - lambda_f) / ((1-lambda_c)); % Zero Phase Feedforward
     params.one_S_bc = 1 - bc; % 1 - bc
 
     %% Estimator Gains

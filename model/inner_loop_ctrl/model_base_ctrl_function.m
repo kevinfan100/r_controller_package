@@ -48,11 +48,11 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     end
 
     %% Feedforward Filter
-    % vf[k] = λf*vf[k-1] + kff{ vd[k] - λc*vd[k-1]} temp change
-    vf_k = params.lambda_f * vf_k1 + params.kff * (params.b * vd + (1 - params.lambda_c * params.b) * vd_k1 - params.lambda_c * vd_k2);
+    % vf[k] = λf*vf[k-1] + kff{vd[k] - λc*vd[k-1]}
+    vf_k = params.lambda_f * vf_k1 + params.kff * (vd - params.lambda_c * vd_k1);
 
-    % δvf[k] = vf[k] - (1-bc)·vf[k-1] - bc·vf[k-2] temp change
-    delta_vf = vf_k - (params.lambda_c + params.kc) * vf_k1 - params.bc * vf_k2;
+    % δvf[k] = vf[k] - (1-bc)·vf[k-1] - bc·vf[k-2]
+    delta_vf = vf_k - params.one_S_bc * vf_k1 - params.bc * vf_k2;
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;
