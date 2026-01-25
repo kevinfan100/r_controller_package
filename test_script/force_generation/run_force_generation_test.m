@@ -54,6 +54,7 @@ signal_type = 'sine';           % 'sine' or 'step'
 % Force direction and magnitude
 force_direction = [1; 0; 0];    % Unit direction vector [Fx; Fy; Fz]
 force_amplitude = 5.0;          % Force amplitude [pN]
+force_offset    = 0;
 
 % Sine mode parameters
 force_frequency = 50;           % Force frequency [Hz]
@@ -65,7 +66,7 @@ step_time = 0.1;                % Step transition time [s]
 % ─────────────────────────────────────────────────────────────────────────
 % 1.4 Bead Position (Measuring Coordinate)
 % ─────────────────────────────────────────────────────────────────────────
-bead_position = [0; 0; 0];      % Bead position [x; y; z] in um
+bead_position = [30; 20; 10];      % Bead position [x; y; z] in um
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.5 Simulation Time
@@ -94,9 +95,9 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ide
 % ─────────────────────────────────────────────────────────────────────────
 % 1.6 R-Controller Parameters
 % ─────────────────────────────────────────────────────────────────────────
-fB_f = 2000;                    % Feedforward bandwidth [Hz]
-fB_c = 1000;                    % Controller bandwidth [Hz]
-fB_e = 5000;                    % Estimator bandwidth [Hz]
+fB_f = 1000;                    % Feedforward bandwidth [Hz]
+fB_c = 3200;                    % Controller bandwidth [Hz]
+fB_e = 16000;                    % Estimator bandwidth [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.7 PI Controller Parameters
@@ -229,7 +230,7 @@ fprintf('  SampleRateMode: %d (%s)\n', sample_rate_mode, sample_rate_labels{samp
 % Generate f_d at 100 kHz
 f_d = zeros(N, 3);
 if strcmpi(signal_type, 'sine')
-    envelope = force_amplitude * sin(2*pi*force_frequency*t + deg2rad(force_phase)) + 10;
+    envelope = force_amplitude * sin(2*pi*force_frequency*t + deg2rad(force_phase)) + force_offset;
     f_d = envelope .* force_direction';
     fprintf('  f_d: Sine wave, %.1f Hz, %.2f pN amplitude\n', force_frequency, force_amplitude);
 else
@@ -249,6 +250,9 @@ fprintf('\n');
 
 %%                        SECTION 4: Simulink Simulation or Ideal Tracking
 
+
+% Save original signal_type before potential Simulink overwrite
+signal_type_original = signal_type;  % 'sine' or 'step'
 
 if USE_SIMULINK
     fprintf('【Simulink Simulation】\n');
@@ -342,8 +346,8 @@ if USE_SIMULINK
         t_vm = (0:size(vm_sim,1)-1)' * Ts;
     end
 
-    % Fm: estimated force (3x1) from Force_Model block
-    Fm_ts = simOut.get('Fm');
+    % f_m: estimated force (3x1) from Force_Model block
+    Fm_ts = simOut.get('f_m');
     if isa(Fm_ts, 'timeseries')
         fm_sim = Fm_ts.Data;
     else
@@ -371,30 +375,134 @@ if USE_SIMULINK
     fprintf('  f_m range: [%.4f, %.4f] pN\n', min(f_m(:)), max(f_m(:)));
 
     % ─────────────────────────────────────────────────────────────────────
-    % Compute vd offline for plotting (optional, for Tab 2 display)
-    % Note: This is a reference calculation, not the actual vd used in Simulink
+    % Vd: desired Hall voltage (6x1) from Simulink (with rate transition)
     % ─────────────────────────────────────────────────────────────────────
-    fprintf('  Computing offline vd for reference plots...');
-    tic;
-    vd = zeros(N, 6);
-    for i = 1:N
-        vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
+    Vd_ts = simOut.get('Vd');
+    if isa(Vd_ts, 'timeseries')
+        vd_sim = Vd_ts.Data;
+    else
+        vd_sim = Vd_ts;
     end
-    fprintf(' Done (%.2f sec)\n', toc);
+    if N_vm ~= N
+        vd = zeros(N, 6);
+        for ch = 1:6
+            vd(:, ch) = interp1(t_vm, vd_sim(:, ch), t, 'linear', 'extrap');
+        end
+    else
+        vd = vd_sim;
+    end
+    fprintf('  vd range: [%.4f, %.4f] V\n', min(vd(:)), max(vd(:)));
+
+    % ─────────────────────────────────────────────────────────────────────
+    % f_d_interp: interpolated desired force from Simulink inverse_model_function
+    % This is the actual f_d used by the inverse model (after rate transition)
+    % ─────────────────────────────────────────────────────────────────────
+    Fd_interp_ts = simOut.get('f_d_interp');
+    if ~isempty(Fd_interp_ts)
+        if isa(Fd_interp_ts, 'timeseries')
+            fd_interp_sim = Fd_interp_ts.Data;
+        else
+            fd_interp_sim = Fd_interp_ts;
+        end
+        if N_vm ~= N
+            f_d_interp = zeros(N, 3);
+            for ax = 1:3
+                f_d_interp(:, ax) = interp1(t_vm, fd_interp_sim(:, ax), t, 'linear', 'extrap');
+            end
+        else
+            f_d_interp = fd_interp_sim;
+        end
+        fprintf('  f_d_interp range: [%.4f, %.4f] pN (from Simulink)\n', min(f_d_interp(:)), max(f_d_interp(:)));
+        has_fd_interp = true;
+    else
+        % Fallback: f_d_interp not available from Simulink (old model)
+        % Use f_d with delay compensation as before
+        fprintf('  Warning: f_d_interp not available from Simulink.\n');
+        fprintf('  Please update main_system.slx to output f_d_interp.\n');
+        has_fd_interp = false;
+
+        % Apply delay compensation to f_d as fallback
+        if strcmpi(generation_mode, 'hardware')
+            Ts_pos = 1 / pos_update_rate;  % 625 µs @ 1600 Hz
+            t_delayed = t - Ts_pos;
+            t_delayed(t_delayed < 0) = 0;
+            f_d_interp = interp1(t, f_d, t_delayed, 'linear', 'extrap');
+            fprintf('  f_d delay applied: %.1f µs (1T @ %d Hz)\n', Ts_pos*1e6, pos_update_rate);
+        else
+            f_d_interp = f_d;
+        end
+    end
+    fprintf('  f_d range: [%.4f, %.4f] pN\n', min(f_d(:)), max(f_d(:)));
 
 else
     fprintf('【Ideal Tracking Mode】\n');
     fprintf('────────────────────────\n');
 
-    % Compute vd offline using inverse_model
-    fprintf('  Computing vd from inverse_model...');
-    tic;
-    vd = zeros(N, 6);
-    for i = 1:N
-        vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
-    end
-    fprintf(' Done (%.2f sec)\n', toc);
+    if strcmpi(generation_mode, 'hardware')
+        % ─────────────────────────────────────────────────────────────────────
+        % Hardware Mode: 1600 Hz sampling + interpolation
+        % This tests the non-linear interpolation error without controller dynamics
+        % ─────────────────────────────────────────────────────────────────────
+        fprintf('  Generation mode: HARDWARE (1600 Hz + %s interpolation)\n', interp_method);
 
+        % Step 1: Create 1600 Hz time grid
+        Ts_1600 = 1 / pos_update_rate;
+        t_1600 = (0:Ts_1600:sim_time)';
+        N_1600 = length(t_1600);
+        fprintf('  1600 Hz points: %d (downsample ratio: %.1f)\n', N_1600, N/N_1600);
+
+        % Step 2: Downsample f_d to 1600 Hz
+        f_d_1600 = interp1(t, f_d, t_1600, 'linear');
+
+        % Step 3: Interpolate f_d back to 100 kHz FIRST
+        % This is the new approach: interpolate f_d, then compute vd
+        fprintf('  Interpolating f_d to 100 kHz (%s)...', interp_method);
+        tic;
+        f_d_interp = zeros(N, 3);
+        if strcmpi(interp_method, 'previous')
+            for ax = 1:3
+                f_d_interp(:, ax) = interp1(t_1600, f_d_1600(:, ax), t, 'previous', 'extrap');
+            end
+        else
+            for ax = 1:3
+                f_d_interp(:, ax) = interp1(t_1600, f_d_1600(:, ax), t, 'linear', 'extrap');
+            end
+        end
+        fprintf(' Done (%.2f sec)\n', toc);
+
+        % Step 4: Compute vd at 100 kHz using inverse_model(f_d_interp)
+        % New approach: compute vd from interpolated f_d (no non-linear interp error)
+        fprintf('  Computing vd @ 100 kHz from f_d_interp...');
+        tic;
+        vd = zeros(N, 6);
+        for i = 1:N
+            vd(i, :) = inverse_model(f_d_interp(i, :)', bead_position, inv_params)';
+        end
+        fprintf(' Done (%.2f sec)\n', toc);
+
+        % Also compute vd_1600 for visualization (1600 Hz sample points)
+        vd_1600 = zeros(N_1600, 6);
+        for i = 1:N_1600
+            vd_1600(i, :) = inverse_model(f_d_1600(i, :)', bead_position, inv_params)';
+        end
+
+    else
+        % ─────────────────────────────────────────────────────────────────────
+        % Ideal Mode: Direct 100 kHz computation (no interpolation)
+        % ─────────────────────────────────────────────────────────────────────
+        fprintf('  Generation mode: IDEAL (Direct 100 kHz)\n');
+
+        % Compute vd offline using inverse_model at every 100 kHz point
+        fprintf('  Computing vd @ 100 kHz...');
+        tic;
+        vd = zeros(N, 6);
+        for i = 1:N
+            vd(i, :) = inverse_model(f_d(i, :)', bead_position, inv_params)';
+        end
+        fprintf(' Done (%.2f sec)\n', toc);
+    end
+
+    % Common: Assume perfect tracking (vm = vd)
     fprintf('  Assuming perfect tracking: vm = vd\n');
     vm = vd;
 
@@ -406,6 +514,9 @@ else
         f_m(i, :) = force_model(vm(i, :)', bead_position, inv_params)';
     end
     fprintf(' Done (%.2f sec)\n', toc);
+
+    fprintf('  vd range: [%.4f, %.4f] V\n', min(vd(:)), max(vd(:)));
+    fprintf('  f_m range: [%.4f, %.4f] pN\n', min(f_m(:)), max(f_m(:)));
 end
 
 fprintf('\n');
@@ -434,8 +545,8 @@ fprintf('  f_m range: [%.4f, %.4f] pN\n', min(f_m(:)), max(f_m(:)));
 fprintf('\n【Analysis】\n');
 fprintf('────────────────────────\n');
 
-% Compute analysis window
-if strcmpi(signal_type, 'sine')
+% Compute analysis window (use signal_type_original to avoid Simulink overwrite)
+if strcmpi(signal_type_original, 'sine')
     T_period = 1 / force_frequency;
     idx_start = round(skip_cycles * T_period / Ts) + 1;
     idx_display = round((total_cycles - display_cycles) * T_period / Ts) + 1;
@@ -444,18 +555,32 @@ else
     idx_display = 1;
 end
 
-% Force error
-force_error = f_d - f_m;
+% Force error: use f_d_interp for Simulink mode (actual input to inverse model)
+if USE_SIMULINK
+    force_error = f_d_interp - f_m;
+else
+    % Ideal Tracking: use f_d_interp in hardware mode, f_d in ideal mode
+    if strcmpi(generation_mode, 'hardware')
+        force_error = f_d_interp - f_m;
+    else
+        force_error = f_d - f_m;
+    end
+end
 force_error_rms = rms(force_error(idx_start:end, :));
 force_error_max = max(abs(force_error(idx_start:end, :)));
 
+% Max error as percentage of amplitude (per direction)
+force_error_max_pct = force_error_max / force_amplitude * 100;
+
 fprintf('  Force Error (RMS): [%.4f, %.4f, %.4f] pN\n', force_error_rms);
 fprintf('  Force Error (Max): [%.4f, %.4f, %.4f] pN\n', force_error_max);
+fprintf('  Force Error (Max %%): [%.2f%%, %.2f%%, %.2f%%] of amplitude\n', ...
+    force_error_max_pct(1), force_error_max_pct(2), force_error_max_pct(3));
 
-% Relative error
+% Relative error (RMS-based, for overall summary)
 if force_amplitude > 0
     relative_error = norm(force_error_rms) / force_amplitude * 100;
-    fprintf('  Relative Error: %.2f%%\n', relative_error);
+    fprintf('  Relative Error (RMS): %.2f%%\n', relative_error);
 end
 
 fprintf('\n');
@@ -503,19 +628,52 @@ if ENABLE_PLOT
     title(tl1, 'Force Comparison: Desired (f_d) vs Estimated (f_m)', ...
         'FontWeight', 'bold', 'FontSize', title_fontsize);
 
+    % Prepare 1600 Hz sample points for hardware mode visualization
+    if strcmpi(generation_mode, 'hardware') && ~USE_SIMULINK
+        % Find 1600 Hz points within display range (t_1600 and f_d_1600 from Section 4)
+        t_display_start = t(idx_display);
+        t_display_end = t(end);
+        idx_1600_display = (t_1600 >= t_display_start) & (t_1600 <= t_display_end);
+        t_1600_display = t_1600(idx_1600_display);
+        fd_1600_display = f_d_1600(idx_1600_display, :);
+    end
+
     for ax_idx = 1:3
         ax = nexttile(tl1);
-        plot(ax, t(idx_display:end)*1000, f_d(idx_display:end, ax_idx), 'b-', ...
-            'LineWidth', measurement_linewidth);
         hold(ax, 'on');
+
+        if USE_SIMULINK
+            % Simulink mode: Show f_d_interp from Simulink
+            plot(ax, t(idx_display:end)*1000, f_d_interp(idx_display:end, ax_idx), 'b-', ...
+                'LineWidth', measurement_linewidth, 'DisplayName', 'f_d\_interp (Simulink)');
+            legend_entries = {'f_d\_interp', 'f_m'};
+        elseif strcmpi(generation_mode, 'hardware')
+            % Ideal Tracking + Hardware mode: Show interpolated fd and 1600 Hz samples
+            % 1. Interpolated fd (100 kHz from 1600 Hz) - thin blue line
+            plot(ax, t(idx_display:end)*1000, f_d_interp(idx_display:end, ax_idx), 'b-', ...
+                'LineWidth', 1.5, 'DisplayName', 'f_d (interp from 1600)');
+            % 2. 1600 Hz sample points - large blue markers
+            plot(ax, t_1600_display*1000, fd_1600_display(:, ax_idx), 'bo', ...
+                'MarkerSize', 10, 'MarkerFaceColor', 'b', 'LineWidth', 1.5, ...
+                'DisplayName', 'f_d (1600 Hz samples)');
+            legend_entries = {'f_d (interp)', 'f_d (1600 Hz)', 'f_m'};
+        else
+            % Ideal mode: Show fd as solid line
+            plot(ax, t(idx_display:end)*1000, f_d(idx_display:end, ax_idx), 'b-', ...
+                'LineWidth', measurement_linewidth, 'DisplayName', 'f_d (desired)');
+            legend_entries = {'f_d (desired)', 'f_m (estimated)'};
+        end
+
+        % f_m (estimated) - always dashed red
         plot(ax, t(idx_display:end)*1000, f_m(idx_display:end, ax_idx), 'r--', ...
-            'LineWidth', reference_linewidth);
+            'LineWidth', reference_linewidth, 'DisplayName', 'f_m (estimated)');
+
         xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
         ylabel(ax, sprintf('%s [pN]', labels{ax_idx}), 'FontSize', ylabel_fontsize);
-        legend(ax, 'f_d (desired)', 'f_m (estimated)', 'Location', 'northeast', ...
-            'FontSize', legend_fontsize);
-        title(ax, sprintf('%s Direction (Error RMS: %.4f pN, %.2f%%)', ...
-            labels{ax_idx}, force_error_rms(ax_idx), per_dir_error_pct(ax_idx)), ...
+        legend(ax, legend_entries, 'Location', 'northeast', 'FontSize', legend_fontsize);
+        title(ax, sprintf('%s: RMS=%.4f pN (%.2f%%), Max=%.4f pN (%.2f%%)', ...
+            labels{ax_idx}, force_error_rms(ax_idx), per_dir_error_pct(ax_idx), ...
+            force_error_max(ax_idx), force_error_max_pct(ax_idx)), ...
             'FontSize', title_fontsize, 'FontWeight', 'bold');
         ax.FontSize = tick_fontsize;
         ax.LineWidth = axis_linewidth;
@@ -549,6 +707,94 @@ if ENABLE_PLOT
         box(ax, 'on');
     end
     fprintf('  Tab 2: Inverse Model Output (vd)\n');
+
+    % ═══════════════════════════════════════════════════════════════════════
+    % Tab 2.5: Interpolation Detail (only for hardware mode + Ideal Tracking)
+    % Shows 1-2 periods of 1600 Hz with all 100 kHz interpolation points
+    % ═══════════════════════════════════════════════════════════════════════
+    if strcmpi(generation_mode, 'hardware') && ~USE_SIMULINK
+        tab_interp = uitab(tabgroup, 'Title', 'Interpolation Detail');
+        tab_handles.interpolation_detail = tab_interp;
+
+        % Calculate time range for 2 periods of 1600 Hz
+        Ts_1600_period = 1 / pos_update_rate;  % ~625 µs
+        num_periods_to_show = 2;
+
+        % Start from a stable point (after skip_cycles)
+        if strcmpi(signal_type_original, 'sine')
+            T_period = 1 / force_frequency;
+            t_detail_start = skip_cycles * T_period;
+        else
+            t_detail_start = step_time + 0.01;  % 10 ms after step
+        end
+        t_detail_end = t_detail_start + num_periods_to_show * Ts_1600_period;
+
+        % Get indices for detail view
+        idx_detail_100k = (t >= t_detail_start) & (t <= t_detail_end);
+        idx_detail_1600 = (t_1600 >= t_detail_start) & (t_1600 <= t_detail_end);
+
+        t_detail_100k = t(idx_detail_100k);
+        t_detail_1600 = t_1600(idx_detail_1600);
+
+        % Calculate max error ratio for each direction (using full steady-state data)
+        interp_error = f_d_interp(idx_start:end, :) - f_m(idx_start:end, :);
+        interp_error_max = max(abs(interp_error));
+        interp_error_max_pct = interp_error_max / force_amplitude * 100;
+
+        % Also calculate for detail window
+        interp_error_detail = f_d_interp(idx_detail_100k, :) - f_m(idx_detail_100k, :);
+        interp_error_detail_max = max(abs(interp_error_detail));
+        interp_error_detail_max_pct = interp_error_detail_max / force_amplitude * 100;
+
+        % Create 3x1 layout for Fx, Fy, Fz
+        tl_interp = tiledlayout(tab_interp, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl_interp, sprintf('Interpolation Detail: %.0f periods @ 1600 Hz (%.1f ms) | Max Error: [%.2f%%, %.2f%%, %.2f%%]', ...
+            num_periods_to_show, (t_detail_end - t_detail_start)*1000, ...
+            interp_error_max_pct(1), interp_error_max_pct(2), interp_error_max_pct(3)), ...
+            'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+        for ax_idx = 1:3
+            ax = nexttile(tl_interp);
+            hold(ax, 'on');
+
+            % 1. 100 kHz interpolated points (small blue dots)
+            plot(ax, t_detail_100k*1000, f_d_interp(idx_detail_100k, ax_idx), 'b.', ...
+                'MarkerSize', 8, 'DisplayName', 'f_d (100 kHz interp)');
+
+            % 2. 1600 Hz sample points (large blue circles)
+            plot(ax, t_detail_1600*1000, f_d_1600(idx_detail_1600, ax_idx), 'bo', ...
+                'MarkerSize', 14, 'MarkerFaceColor', 'b', 'LineWidth', 2, ...
+                'DisplayName', 'f_d (1600 Hz samples)');
+
+            % 3. fm points (small red dots)
+            plot(ax, t_detail_100k*1000, f_m(idx_detail_100k, ax_idx), 'r.', ...
+                'MarkerSize', 8, 'DisplayName', 'f_m (100 kHz)');
+
+            % Add vertical lines at 1600 Hz boundaries
+            for t_boundary = t_detail_1600'
+                xline(ax, t_boundary*1000, 'k:', 'LineWidth', 0.5, 'HandleVisibility', 'off');
+            end
+
+            xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
+            ylabel(ax, sprintf('%s [pN]', labels{ax_idx}), 'FontSize', ylabel_fontsize);
+            legend(ax, 'Location', 'best', 'FontSize', legend_fontsize);
+            title(ax, sprintf('%s: Max Error = %.4f pN (%.2f%% of amplitude)', ...
+                labels{ax_idx}, interp_error_max(ax_idx), interp_error_max_pct(ax_idx)), ...
+                'FontSize', title_fontsize, 'FontWeight', 'bold');
+            ax.FontSize = tick_fontsize;
+            ax.LineWidth = axis_linewidth;
+            grid(ax, 'on');
+            box(ax, 'on');
+        end
+
+        % Print error summary to console
+        fprintf('  Interpolation Error (fd_interp - fm):\n');
+        fprintf('    Max Error: [%.4f, %.4f, %.4f] pN\n', interp_error_max);
+        fprintf('    Max Error %%: [%.2f%%, %.2f%%, %.2f%%] of amplitude\n', ...
+            interp_error_max_pct(1), interp_error_max_pct(2), interp_error_max_pct(3));
+
+        fprintf('  Tab: Interpolation Detail (%.0f periods @ 1600 Hz)\n', num_periods_to_show);
+    end
 
     % ═══════════════════════════════════════════════════════════════════════
     % Tab 3: Error Analysis - 3 axes (error time series only)
@@ -717,11 +963,11 @@ if ENABLE_PLOT
         tab6 = uitab(tabgroup, 'Title', 'Vm vs Vd');
         tab_handles.vd_vs_vm = tab6;
 
-        % Calculate 3-cycle window indices (from steady state)
-        cycles_for_plot = 3;
-        if strcmpi(signal_type, 'sine')
+        % Calculate cycle window indices (from steady state)
+        cycles_for_plot = 3;  % Overlay 3 cycles
+        if strcmpi(signal_type_original, 'sine')
             T_period = 1 / force_frequency;
-            % Start from skip_cycles, take 3 cycles
+            % Start from skip_cycles, take cycles_for_plot cycles
             idx_plot_start = round(skip_cycles * T_period / Ts) + 1;
             idx_plot_end = round((skip_cycles + cycles_for_plot) * T_period / Ts);
             idx_plot_end = min(idx_plot_end, N);  % Clamp to array size
@@ -753,43 +999,44 @@ if ENABLE_PLOT
             plot_handles(ch) = plot(ax6, ...
                 vd(idx_plot_start:idx_plot_end, ch), ...
                 vm(idx_plot_start:idx_plot_end, ch), ...
-                'Color', colors_6ch(ch,:), 'LineWidth', measurement_linewidth);
+                'Color', colors_6ch(ch,:), 'LineWidth', 4.0);
         end
 
         % Add reference line (y = x) as black dashed
         all_voltage = [vd(idx_plot_start:idx_plot_end, :); vm(idx_plot_start:idx_plot_end, :)];
         lims_v = [min(all_voltage(:)), max(all_voltage(:))];
-        plot(ax6, lims_v, lims_v, 'k--', 'LineWidth', 1.5);
+        plot(ax6, lims_v, lims_v, 'k--', 'LineWidth', 2.5);
 
-        % Title with frequency
+        % Title with frequency (enlarged, bold)
         title(ax6, sprintf('Vm vs Vd (Freq: %.1f Hz)', force_frequency), ...
-            'FontSize', title_fontsize, 'FontWeight', 'bold');
+            'FontSize', 26, 'FontWeight', 'bold');
 
-        % Set axis labels (matching reference font sizes: +4)
-        xlabel(ax6, 'Vd [V]', 'FontSize', xlabel_fontsize+4, 'FontWeight', 'bold');
-        ylabel(ax6, 'Vm [V]', 'FontSize', ylabel_fontsize+4, 'FontWeight', 'bold');
+        % Set axis labels (enlarged, bold)
+        xlabel(ax6, 'Vd [V]', 'FontSize', 26, 'FontWeight', 'bold');
+        ylabel(ax6, 'Vm [V]', 'FontSize', 26, 'FontWeight', 'bold');
 
-        % Axis properties (matching reference)
-        ax6.FontSize = tick_fontsize + 4;
+        % Axis properties (enlarged, bold)
+        ax6.FontSize = 22;
         ax6.FontWeight = 'bold';
-        ax6.LineWidth = axis_linewidth;
+        ax6.LineWidth = 2.5;
         ax6.Box = 'on';
         axis(ax6, 'equal');
         grid(ax6, 'on');
 
-        % Legend at southeast (matching reference)
+        % Legend at southeast (enlarged, bold)
         legend(ax6, plot_handles, channel_labels, ...
             'Location', 'southeast', ...
-            'FontSize', legend_fontsize + 2, 'FontWeight', 'bold');
+            'FontSize', 16, 'FontWeight', 'bold');
 
         fprintf('  Tab 6: Vm vs Vd Tracking (%d cycles)\n', cycles_for_plot);
 
         % ───────────────────────────────────────────────────────────────────
-        % Tab 7: fd vs fm Tracking (TEMPORARY)
-        %        X: fd (excited direction only), Y: fm (all 3 directions)
-        %        Style: matching reference image
+        % Tab 7: fm vs f_d_interp Tracking
+        %        X: f_d_interp (from Simulink, excited direction)
+        %        Y: fm (all 3 directions)
+        %        This shows pure controller tracking without inverse model error
         % ───────────────────────────────────────────────────────────────────
-        tab7 = uitab(tabgroup, 'Title', 'fm vs fd (TEMP)');
+        tab7 = uitab(tabgroup, 'Title', 'fm vs fd\_interp');
         tab_handles.fd_vs_fm = tab7;
 
         % Find the excited direction index (the one with largest component in force_direction)
@@ -797,46 +1044,45 @@ if ENABLE_PLOT
         force_labels_short = {'X', 'Y', 'Z'};
         force_colors = [0.0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.4660 0.6740 0.1880];
 
-        % Use the same 3-cycle window as Tab 6 (100 kHz data)
-        % idx_plot_start and idx_plot_end are already defined above
-
-        % Extract data (100 kHz interpolated data)
-        fd_excited = f_d(idx_plot_start:idx_plot_end, excited_axis);
-        fm_all = f_m(idx_plot_start:idx_plot_end, :);  % All 3 directions
+        % Extract data for plotting (using f_d_interp from Simulink)
+        idx_one_cycle = idx_plot_start:idx_plot_end;
+        fd_excited = f_d_interp(idx_one_cycle, excited_axis);  % f_d_interp from Simulink
+        fm_all = f_m(idx_one_cycle, :);  % All 3 directions
 
         % Create single axes for the plot
         ax7 = uiaxes(tab7);
         ax7.Position = [100 80 1200 750];
         hold(ax7, 'on');
 
-        % Plot fm (all 3 directions) vs fd (excited) - X on fd axis, Y on fm axis
+        % Plot fm (all 3 directions) vs fd (excited) as single LINE
+        % One continuous line per axis showing the Lissajous trajectory
         plot_handles_7 = gobjects(1, 3);
         for i = 1:3
             plot_handles_7(i) = plot(ax7, fd_excited, fm_all(:, i), ...
-                '-', 'Color', force_colors(i,:), 'LineWidth', 2.5);
+                '-', 'Color', force_colors(i,:), 'LineWidth', 3.5);
         end
 
         % Add ideal reference line (y=x) as black dashed
         axis_limit = force_amplitude * 1.05;
         plot(ax7, [-axis_limit, axis_limit], [-axis_limit, axis_limit], ...
-            'k--', 'LineWidth', 1.5);
+            'k--', 'LineWidth', 2.5);
 
         % Set axis limits
         xlim(ax7, [-axis_limit, axis_limit]);
         ylim(ax7, [-axis_limit, axis_limit]);
 
-        % Title
-        title(ax7, sprintf('fm vs fd (Freq: %.1f Hz)', force_frequency), ...
-            'FontSize', 16, 'FontWeight', 'bold');
+        % Title (enlarged, bold)
+        title(ax7, sprintf('fm vs fd\\_interp (Freq: %.1f Hz)', force_frequency), ...
+            'FontSize', 26, 'FontWeight', 'bold');
 
-        % Set axis labels (bold, larger)
-        xlabel(ax7, 'fd [pN]', 'FontSize', 18, 'FontWeight', 'bold');
-        ylabel(ax7, 'fm [pN]', 'FontSize', 18, 'FontWeight', 'bold');
+        % Set axis labels (enlarged, bold)
+        xlabel(ax7, 'fd\\_interp [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+        ylabel(ax7, 'fm [pN]', 'FontSize', 26, 'FontWeight', 'bold');
 
-        % Axis properties
-        ax7.FontSize = 14;
+        % Axis properties (enlarged, bold)
+        ax7.FontSize = 22;
         ax7.FontWeight = 'bold';
-        ax7.LineWidth = 2;  % Thicker frame
+        ax7.LineWidth = 2.5;
         ax7.XColor = 'k';
         ax7.YColor = 'k';
         ax7.GridColor = [0.8 0.8 0.8];
@@ -844,12 +1090,224 @@ if ENABLE_PLOT
         grid(ax7, 'on');
         box(ax7, 'on');
 
-        % Legend at bottom right
+        % Legend at bottom right (enlarged, bold)
         legend(ax7, plot_handles_7, force_labels_short, ...
             'Location', 'southeast', ...
-            'FontSize', 12, 'FontWeight', 'bold');
+            'FontSize', 16, 'FontWeight', 'bold');
 
-        fprintf('  Tab 7: fm vs fd Tracking (Freq: %.1f Hz) (TEMPORARY)\n', force_frequency);
+        fprintf('  Tab 7: fm vs fd_interp Tracking (Freq: %.1f Hz)\n', force_frequency);
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 8: Vm[k] vs Vd[k-2] (Delayed comparison)
+        %        Compare with Tab 6 to see effect of 2-step delay compensation
+        % ───────────────────────────────────────────────────────────────────
+        tab8 = uitab(tabgroup, 'Title', 'Vm vs Vd (Delayed)');
+        tab_handles.vd_vs_vm_delayed = tab8;
+
+        % Delay parameters
+        delay_samples = 2;  % 2 steps @ 100kHz = 20µs
+        delay_us = delay_samples * Ts * 1e6;
+
+        % Adjust plot range to avoid boundary issues
+        idx_delayed_start = max(idx_plot_start, 1 + delay_samples);
+        idx_delayed_end = min(idx_plot_end, N);
+
+        % Extract delayed data: Vm[k] vs Vd[k-2]
+        % X-axis: Vd[k-2] (vd from 2 steps earlier)
+        % Y-axis: Vm[k] (current vm)
+        vd_for_delayed = vd(idx_delayed_start - delay_samples : idx_delayed_end - delay_samples, :);
+        vm_for_delayed = vm(idx_delayed_start : idx_delayed_end, :);
+
+        % Create single axes for overlaid plot
+        ax8 = uiaxes(tab8);
+        ax8.Position = [100 80 1200 750];
+        hold(ax8, 'on');
+
+        % Plot 6 channels: X=Vd[k-2], Y=Vm[k]
+        plot_handles_8 = gobjects(1, 6);
+        for ch = 1:6
+            plot_handles_8(ch) = plot(ax8, ...
+                vd_for_delayed(:, ch), ...
+                vm_for_delayed(:, ch), ...
+                'Color', colors_6ch(ch,:), 'LineWidth', 4.0);
+        end
+
+        % Add reference line (y = x) as black dashed
+        all_voltage_8 = [vd_for_delayed; vm_for_delayed];
+        lims_v8 = [min(all_voltage_8(:)), max(all_voltage_8(:))];
+        plot(ax8, lims_v8, lims_v8, 'k--', 'LineWidth', 2.5);
+
+        % Title (enlarged, bold)
+        title(ax8, sprintf('Vm[k] vs Vd[k-2] (Freq: %.1f Hz)', force_frequency), ...
+            'FontSize', 26, 'FontWeight', 'bold');
+
+        % Set axis labels (enlarged, bold)
+        xlabel(ax8, 'Vd[k-2] [V]', 'FontSize', 26, 'FontWeight', 'bold');
+        ylabel(ax8, 'Vm[k] [V]', 'FontSize', 26, 'FontWeight', 'bold');
+
+        % Axis properties (enlarged, bold)
+        ax8.FontSize = 22;
+        ax8.FontWeight = 'bold';
+        ax8.LineWidth = 2.5;
+        ax8.Box = 'on';
+        axis(ax8, 'equal');
+        grid(ax8, 'on');
+
+        % Legend at southeast (enlarged, bold)
+        legend(ax8, plot_handles_8, channel_labels, ...
+            'Location', 'southeast', ...
+            'FontSize', 16, 'FontWeight', 'bold');
+
+        fprintf('  Tab 8: Vm[k] vs Vd[k-2]\n');
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 9: Fm[k] vs fd_interp[k-2] (Delayed comparison)
+        %        Using f_d_interp from Simulink for accurate comparison
+        % ───────────────────────────────────────────────────────────────────
+        tab9 = uitab(tabgroup, 'Title', 'fm vs fd\_interp (Delayed)');
+        tab_handles.fd_vs_fm_delayed = tab9;
+
+        % Extract delayed data: Fm[k] vs fd_interp[k-2]
+        % X-axis: fd_interp[k-2] (f_d_interp from 2 steps earlier)
+        % Y-axis: Fm[k] (current f_m)
+        fd_for_delayed = f_d_interp(idx_delayed_start - delay_samples : idx_delayed_end - delay_samples, excited_axis);
+        fm_for_delayed = f_m(idx_delayed_start : idx_delayed_end, :);
+
+        % Create single axes for the plot
+        ax9 = uiaxes(tab9);
+        ax9.Position = [100 80 1200 750];
+        hold(ax9, 'on');
+
+        % Plot fm (all 3 directions) vs fd (excited, delayed)
+        plot_handles_9 = gobjects(1, 3);
+        for i = 1:3
+            plot_handles_9(i) = plot(ax9, fd_for_delayed, fm_for_delayed(:, i), ...
+                '-', 'Color', force_colors(i,:), 'LineWidth', 3.5);
+        end
+
+        % Add ideal reference line (y=x) as black dashed
+        plot(ax9, [-axis_limit, axis_limit], [-axis_limit, axis_limit], ...
+            'k--', 'LineWidth', 2.5);
+
+        % Set axis limits
+        xlim(ax9, [-axis_limit, axis_limit]);
+        ylim(ax9, [-axis_limit, axis_limit]);
+
+        % Title (enlarged, bold)
+        title(ax9, sprintf('Fm[k] vs fd\\_interp[k-2] (Freq: %.1f Hz)', force_frequency), ...
+            'FontSize', 26, 'FontWeight', 'bold');
+
+        % Set axis labels (enlarged, bold)
+        xlabel(ax9, 'fd\\_interp[k-2] [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+        ylabel(ax9, 'Fm[k] [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+
+        % Axis properties (enlarged, bold)
+        ax9.FontSize = 22;
+        ax9.FontWeight = 'bold';
+        ax9.LineWidth = 2.5;
+        ax9.XColor = 'k';
+        ax9.YColor = 'k';
+        ax9.GridColor = [0.8 0.8 0.8];
+        ax9.GridAlpha = 1;
+        grid(ax9, 'on');
+        box(ax9, 'on');
+
+        % Legend at bottom right (enlarged, bold)
+        legend(ax9, plot_handles_9, force_labels_short, ...
+            'Location', 'southeast', ...
+            'FontSize', 16, 'FontWeight', 'bold');
+
+        fprintf('  Tab 9: Fm[k] vs fd_interp[k-2]\n');
+
+    else
+        % ═══════════════════════════════════════════════════════════════════════
+        % Ideal Tracking Mode: Tab 4 - fd vs fm (Round-trip verification)
+        % ═══════════════════════════════════════════════════════════════════════
+        tab4 = uitab(tabgroup, 'Title', 'fm vs fd');
+        tab_handles.fd_vs_fm = tab4;
+
+        % Find the excited direction index
+        [~, excited_axis] = max(abs(force_direction));
+        force_labels_short = {'X', 'Y', 'Z'};
+        force_colors = [0.0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.4660 0.6740 0.1880];
+
+        % Calculate cycle window indices for plotting
+        cycles_for_plot = 3;
+        if strcmpi(signal_type_original, 'sine')
+            T_period = 1 / force_frequency;
+            idx_plot_start = round(skip_cycles * T_period / Ts) + 1;
+            idx_plot_end = round((skip_cycles + cycles_for_plot) * T_period / Ts);
+            idx_plot_end = min(idx_plot_end, N);
+        else
+            idx_plot_start = idx_display;
+            idx_plot_end = N;
+        end
+
+        % Extract data
+        idx_one_cycle = idx_plot_start:idx_plot_end;
+        % Use f_d_interp in hardware mode for consistent comparison
+        if strcmpi(generation_mode, 'hardware')
+            fd_excited = f_d_interp(idx_one_cycle, excited_axis);
+        else
+            fd_excited = f_d(idx_one_cycle, excited_axis);
+        end
+        fm_all = f_m(idx_one_cycle, :);
+
+        % Create single axes for the plot
+        ax4 = uiaxes(tab4);
+        ax4.Position = [100 80 1200 750];
+        hold(ax4, 'on');
+
+        % Plot fm (all 3 directions) vs fd (excited)
+        plot_handles_4 = gobjects(1, 3);
+        for i = 1:3
+            plot_handles_4(i) = plot(ax4, fd_excited, fm_all(:, i), ...
+                '-', 'Color', force_colors(i,:), 'LineWidth', 3.5);
+        end
+
+        % Add ideal reference line (y=x)
+        axis_limit = force_amplitude * 1.05;
+        plot(ax4, [-axis_limit, axis_limit], [-axis_limit, axis_limit], ...
+            'k--', 'LineWidth', 2.5);
+
+        % Set axis limits
+        xlim(ax4, [-axis_limit, axis_limit]);
+        ylim(ax4, [-axis_limit, axis_limit]);
+
+        % Title (enlarged, bold)
+        if strcmpi(generation_mode, 'hardware')
+            title_str = sprintf('fm vs fd_{interp} - Hardware Mode (Freq: %.1f Hz)', force_frequency);
+        else
+            title_str = sprintf('fm vs fd - Ideal Mode (Freq: %.1f Hz)', force_frequency);
+        end
+        title(ax4, title_str, ...
+            'FontSize', 26, 'FontWeight', 'bold');
+
+        % Set axis labels (enlarged, bold)
+        if strcmpi(generation_mode, 'hardware')
+            xlabel(ax4, 'fd_{interp} [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+        else
+            xlabel(ax4, 'fd [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+        end
+        ylabel(ax4, 'fm [pN]', 'FontSize', 26, 'FontWeight', 'bold');
+
+        % Axis properties (enlarged, bold)
+        ax4.FontSize = 22;
+        ax4.FontWeight = 'bold';
+        ax4.LineWidth = 2.5;
+        ax4.XColor = 'k';
+        ax4.YColor = 'k';
+        ax4.GridColor = [0.8 0.8 0.8];
+        ax4.GridAlpha = 1;
+        grid(ax4, 'on');
+        box(ax4, 'on');
+
+        % Legend at bottom right (enlarged, bold)
+        legend(ax4, plot_handles_4, force_labels_short, ...
+            'Location', 'southeast', ...
+            'FontSize', 16, 'FontWeight', 'bold');
+
+        fprintf('  Tab 4: fm vs fd - Ideal Tracking (%d cycles)\n', cycles_for_plot);
     end
 
     % Store main figure handle for export
@@ -937,12 +1395,29 @@ if SAVE_MAT || SAVE_PNG
                     drawnow; pause(0.1);
                     exportgraphics(tab6, fullfile(test_dir, 'tab6_vd_vs_vm.png'), 'Resolution', export_resolution);
 
-                    % Tab 7: fd vs fm Tracking (TEMPORARY)
+                    % Tab 7: fm vs fd_interp Tracking
                     tabgroup.SelectedTab = tab7;
                     drawnow; pause(0.1);
-                    exportgraphics(tab7, fullfile(test_dir, 'tab7_fd_vs_fm_TEMP.png'), 'Resolution', export_resolution);
+                    exportgraphics(tab7, fullfile(test_dir, 'tab7_fm_vs_fd_interp.png'), 'Resolution', export_resolution);
 
-                    tab_count = 7;
+                    % Tab 8: Vm vs Vd (Delayed)
+                    tabgroup.SelectedTab = tab8;
+                    drawnow; pause(0.1);
+                    exportgraphics(tab8, fullfile(test_dir, 'tab8_vm_vs_vd_delayed.png'), 'Resolution', export_resolution);
+
+                    % Tab 9: fm vs fd_interp (Delayed)
+                    tabgroup.SelectedTab = tab9;
+                    drawnow; pause(0.1);
+                    exportgraphics(tab9, fullfile(test_dir, 'tab9_fm_vs_fd_interp_delayed.png'), 'Resolution', export_resolution);
+
+                    tab_count = 9;
+                else
+                    % Ideal Tracking mode: Tab 4 (fd vs fm)
+                    tabgroup.SelectedTab = tab4;
+                    drawnow; pause(0.1);
+                    exportgraphics(tab4, fullfile(test_dir, 'tab4_fd_vs_fm.png'), 'Resolution', export_resolution);
+
+                    tab_count = 4;
                 end
 
                 fprintf('  Figures saved (%d tabs, %d DPI)\n', tab_count, export_resolution);
@@ -992,6 +1467,7 @@ if SAVE_MAT || SAVE_PNG
         % Additional Simulink data
         if USE_SIMULINK
             results.data.u = u_data;
+            results.data.f_d_interp = f_d_interp;  % Interpolated f_d from Simulink
             results.analysis.voltage_error_rms = voltage_error_rms;
             results.analysis.voltage_error_max = voltage_error_max;
         end
