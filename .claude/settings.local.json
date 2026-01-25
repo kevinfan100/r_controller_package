@@ -1,16 +1,22 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(matlab -batch:*)",
-      "Bash(dir:*)",
-      "Bash(nul)",
-      "Bash(findstr:*)",
-      "Bash(git init:*)",
-      "Bash(git add:*)",
-      "Bash(if exist nul del /F nul 2)",
-      "Bash(NUL)",
-      "Bash(git commit:*)",
-      "Bash(ls:*)"
+      "Bash(file:*)",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__read_multiple_files",
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__list_directory_with_sizes",
+      "mcp__filesystem__get_file_info",
+      "Bash(done)",
+      "Bash(if [ -d \"/Users/kevin/Code/r_controller_package/test_results/force_ctrl\" ])",
+      "Bash(then mv /Users/kevin/Code/r_controller_package/test_results/force_ctrl /Users/kevin/Code/r_controller_package/test_results/force_generation)",
+      "Bash(else echo \"test_results/force_ctrl does not exist\")",
+      "Bash(fi)",
+      "Bash(claude skills:*)",
+      "Bash(grep:*)",
+      "Bash(mdfind:*)"
     ],
     "deny": [],
     "ask": []
