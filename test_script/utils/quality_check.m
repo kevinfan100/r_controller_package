@@ -30,7 +30,7 @@ function results = quality_check(signal, fs, amplitude, varargin)
 %       fprintf('Channel 1 passed all quality checks\n');
 %   end
 %
-% Author: R-Controller Package Team
+% Author: ZPETC Package Team
 % Date: 2025-01-17
 
     % Parse optional parameters

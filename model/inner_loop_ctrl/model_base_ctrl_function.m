@@ -1,7 +1,7 @@
 function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
-% MODEL_BASE_CTRL_FUNCTION R Controller with pre-calculated parameters
+% MODEL_BASE_CTRL_FUNCTION Zero Phase Error Tracking Controller (ZPETC)
 %
-% Implements R Controller using pre-calculated parameters from
+% Implements ZPETC using pre-calculated parameters from
 % model_base_ctrl_params(). This function contains ONLY the
 % difference equations for real-time execution.
 %

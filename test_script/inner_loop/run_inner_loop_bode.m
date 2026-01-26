@@ -1,5 +1,5 @@
 % run_inner_loop_bode.m
-% R Controller 頻率響應測試腳本 - Bode Plot 分析
+% Zero Phase Error Tracking Controller (ZPETC) 頻率響應測試腳本 - Bode Plot 分析
 %
 % 功能：
 %   1. 掃過多個頻率點（10 Hz ~ 2 kHz, 13 點）
@@ -13,7 +13,7 @@ clear; clc; close all;
 
 fprintf('\n');
 fprintf('════════════════════════════════════════════════════════════\n');
-fprintf('           R Controller 頻率響應測試 (Bode Plot)\n');
+fprintf('           ZPETC 頻率響應測試 (Bode Plot)\n');
 fprintf('════════════════════════════════════════════════════════════\n');
 fprintf('\n');
 
@@ -30,17 +30,17 @@ addpath(fullfile(package_root, 'model', 'flux_allocation'));
 % 移除 1 Hz（max_sim_time=5s 時週期數不足）
 frequencies = [10, 50, 100, ...
                125, 200, 250, 400, 500, ...
-               625, 800, 1000, 1250, 2000, 2500, 3200, 4000, 5000, 6000];                 
+               625, 800, 1000, 1250, 2000, 2500, 3200, 4000];                 
 
 d_values = [0];
 
-% FFT 分析延遲設定 (temp zero phase, 僅 R-Controller 使用)
-% 只做 delay=0 的 FFT 分析，delay=2 的相位用公式計算
-% 公式：phase(delay=2) = phase(delay=0) + 2*theta，其中 theta = 2*pi*f*Ts
+% FFT 分析 preview 設定 (僅 ZPETC 使用)
+% 只做 preview=0 的 FFT 分析，preview=2 的相位用公式計算
+% 公式：phase(preview=2) = phase(preview=0) + 2*theta，其中 theta = 2*pi*f*Ts
 % 這樣可以減少計算量，同時保持理論精確度
 % 注意：PI 控制器會自動忽略此設定，只輸出基本 Bode Plot
-fft_delay_values_config = [0, 2];  % 顯示用（實際只計算 delay=0，delay=2 用公式）
-use_formula_for_delay = true;  % true: 用公式計算 delay>0 的相位
+fft_preview_values_config = [0, 2];  % 顯示用（實際只計算 preview=0，preview=2 用公式）
+use_formula_for_preview = true;  % true: 用公式計算 preview>0 的相位
 
 % Vd Generator 設定
 signal_type_name = 'sine';
@@ -63,8 +63,8 @@ params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
 % ======================================================
 
 % ==================== 控制器類型選擇 ====================
-% 1 = R-Controller, 2 = PI-Controller
-ControllerType = 2;
+% 1 = ZPETC (Zero Phase Error Tracking Controller), 2 = PI-Controller
+ControllerType = 1;
 % ========================================================
 
 % ==================== PI 控制器參數 ====================
@@ -109,28 +109,28 @@ model_path = fullfile(package_root, 'model', [model_name '.slx']);
 
 %% SECTION 2: 初始化
 
-% 根據控制器類型設定 FFT delay 值
-% PI 控制器: 只用 delay=0，不顯示延遲比較圖
-% R-Controller: 使用配置的延遲值
+% 根據控制器類型設定 FFT preview 值
+% PI 控制器: 只用 preview=0，不顯示 preview 比較圖
+% ZPETC: 使用配置的 preview 值
 if ControllerType == 2
-    fft_delay_values = [0];  % PI: 只用 delay=0
-    use_formula_for_delay = false;
+    fft_preview_values = [0];  % PI: 只用 preview=0
+    use_formula_for_preview = false;
 else
-    fft_delay_values = fft_delay_values_config;  % R: 使用配置值
+    fft_preview_values = fft_preview_values_config;  % ZPETC: 使用配置值
 end
 
 fprintf('【測試配置】\n');
 fprintf('────────────────────────\n');
 if ControllerType == 1
-    fprintf('  控制器: R-Controller\n');
+    fprintf('  控制器: ZPETC (Zero Phase Error Tracking Controller)\n');
     fprintf('  前饋濾波器頻寬: %.1f kHz\n', fB_f/1000);
     fprintf('  控制器頻寬: %.1f kHz\n', fB_c/1000);
     fprintf('  估測器頻寬: %.1f kHz\n', fB_e/1000);
-    fprintf('  FFT 延遲值: [%s] samples (比較模式)\n', num2str(fft_delay_values));
+    fprintf('  FFT preview 值: [%s] samples (比較模式)\n', num2str(fft_preview_values));
 else
     fprintf('  控制器: PI-Controller\n');
     fprintf('  Kp: %.2f, Ki: %.2f (zc=%d)\n', Kp_value, Ki_value, zc);
-    fprintf('  FFT 延遲值: [0] (PI 模式，不顯示延遲比較)\n');
+    fprintf('  FFT preview 值: [0] (PI 模式，不顯示 preview 比較)\n');
 end
 fprintf('  頻率範圍: %.1f Hz ~ %.1f kHz\n', frequencies(1), frequencies(end)/1000);
 fprintf('  激勵通道: P%d\n', Channel);
@@ -142,7 +142,7 @@ fprintf('\n');
 % 取得 b 參數值用於理論曲線計算
 b_value = params.Value.b;
 fprintf('  理論模型參數 b: %.4f\n', b_value);
-fprintf('  理論模式: temp zero phase (λf=0, 2步延遲)\n');
+fprintf('  理論模式: 標準前饋濾波器 (λf=0)\n');
 fprintf('\n');
 
 % 檢查模型
@@ -182,7 +182,7 @@ fprintf('\n');
 % 初始化結果結構
 num_d = length(d_values);
 num_freq = length(frequencies);
-num_fft_delays = length(fft_delay_values);
+num_fft_previews = length(fft_preview_values);
 
 for d_idx = 1:num_d
     d = d_values(d_idx);
@@ -192,9 +192,9 @@ for d_idx = 1:num_d
     fprintf('════════════════════════════════════════════════════════════\n');
     fprintf('\n');
 
-    % 初始化此 d 值的結果矩陣（為每個 fft_delay 值儲存）
-    magnitude_ratio_all = zeros(num_freq, 6, num_fft_delays);  % 3D: freq x ch x fft_delay
-    phase_lag_all = zeros(num_freq, 6, num_fft_delays);        % 3D: freq x ch x fft_delay
+    % 初始化此 d 值的結果矩陣（為每個 fft_preview 值儲存）
+    magnitude_ratio_all = zeros(num_freq, 6, num_fft_previews);  % 3D: freq x ch x fft_preview
+    phase_lag_all = zeros(num_freq, 6, num_fft_previews);        % 3D: freq x ch x fft_preview
     sim_times = zeros(num_freq, 1);
 
     % 初始化品質檢測結果矩陣
@@ -465,12 +465,12 @@ for d_idx = 1:num_d
 
         %% ========== 品質檢測結束 ==========
 
-        % FFT 分析（只做 delay=0，其他 delay 用公式計算）
+        % FFT 分析（只做 preview=0，其他 preview 用公式計算）
         fprintf('  📊 執行 FFT 分析...\n');
 
         fs = 1 / Ts;
 
-        % ========== 只對 delay=0 進行 FFT 分析 ==========
+        % ========== 只對 preview=0 進行 FFT 分析 ==========
         Vd_for_fft = Vd_steady;
         Vm_for_fft = Vm_steady;
         N_fft = size(Vd_for_fft, 1);
@@ -499,13 +499,13 @@ for d_idx = 1:num_d
         Vd_mag = abs(Vd_fft(freq_bin_idx)) * 2 / N_fft;
         Vd_phase = angle(Vd_fft(freq_bin_idx)) * 180 / pi;
 
-        % 對所有 Vm 通道做 FFT（只計算 delay=0）
+        % 對所有 Vm 通道做 FFT（只計算 preview=0）
         for ch = 1:6
             Vm_fft = fft(Vm_for_fft(:, ch));
             Vm_mag = abs(Vm_fft(freq_bin_idx)) * 2 / N_fft;
             Vm_phase = angle(Vm_fft(freq_bin_idx)) * 180 / pi;
 
-            % 計算頻率響應 (delay=0)
+            % 計算頻率響應 (preview=0)
             magnitude_ratio_all(freq_idx, ch, 1) = Vm_mag / Vd_mag;
             phase_lag_all(freq_idx, ch, 1) = Vm_phase - Vd_phase;
 
@@ -518,105 +518,127 @@ for d_idx = 1:num_d
             end
         end
 
-        % ========== 用公式計算其他 delay 值的相位 ==========
-        % 公式：phase(delay=N) = phase(delay=0) + N*theta
+        % ========== 用公式計算其他 preview 值的相位 ==========
+        % 公式：phase(preview=N) = phase(preview=0) + N*theta
         % 其中 theta = 2*pi*f*Ts (弧度), 轉為度數 = N * 2*pi*f*Ts * (180/pi)
-        if use_formula_for_delay && num_fft_delays > 1
+        if use_formula_for_preview && num_fft_previews > 1
             theta_deg = 2 * pi * Frequency * Ts * (180 / pi);  % 1 step 的相位偏移（度）
 
-            for delay_idx = 2:num_fft_delays
-                fft_delay = fft_delay_values(delay_idx);
-                phase_shift = fft_delay * theta_deg;  % N steps 的相位偏移
+            for preview_idx = 2:num_fft_previews
+                fft_preview = fft_preview_values(preview_idx);
+                phase_shift = fft_preview * theta_deg;  % N steps 的相位偏移
 
                 for ch = 1:6
                     % 振幅不變
-                    magnitude_ratio_all(freq_idx, ch, delay_idx) = magnitude_ratio_all(freq_idx, ch, 1);
+                    magnitude_ratio_all(freq_idx, ch, preview_idx) = magnitude_ratio_all(freq_idx, ch, 1);
 
-                    % 相位 = delay=0 相位 + delay*theta
-                    phase_lag_all(freq_idx, ch, delay_idx) = phase_lag_all(freq_idx, ch, 1) + phase_shift;
+                    % 相位 = preview=0 相位 + preview*theta
+                    phase_lag_all(freq_idx, ch, preview_idx) = phase_lag_all(freq_idx, ch, 1) + phase_shift;
 
                     % 相位正規化到 [-180, 180]
-                    while phase_lag_all(freq_idx, ch, delay_idx) > 180
-                        phase_lag_all(freq_idx, ch, delay_idx) = phase_lag_all(freq_idx, ch, delay_idx) - 360;
+                    while phase_lag_all(freq_idx, ch, preview_idx) > 180
+                        phase_lag_all(freq_idx, ch, preview_idx) = phase_lag_all(freq_idx, ch, preview_idx) - 360;
                     end
-                    while phase_lag_all(freq_idx, ch, delay_idx) < -180
-                        phase_lag_all(freq_idx, ch, delay_idx) = phase_lag_all(freq_idx, ch, delay_idx) + 360;
+                    while phase_lag_all(freq_idx, ch, preview_idx) < -180
+                        phase_lag_all(freq_idx, ch, preview_idx) = phase_lag_all(freq_idx, ch, preview_idx) + 360;
                     end
                 end
             end
         end
 
-        % 顯示結果（使用第一個 fft_delay 值的結果）
+        % 顯示結果（使用第一個 fft_preview 值的結果）
         fprintf('  ✓ FFT 完成 (頻率 bin: %.2f Hz)\n', actual_freq);
-        for delay_idx = 1:num_fft_delays
-            fprintf('    delay=%d: P%d 增益=%.2f%%, 相位=%.2f°\n', ...
-                    fft_delay_values(delay_idx), Channel, ...
-                    magnitude_ratio_all(freq_idx, Channel, delay_idx)*100, ...
-                    phase_lag_all(freq_idx, Channel, delay_idx));
+        for preview_idx = 1:num_fft_previews
+            fprintf('    preview=%d: P%d 增益=%.2f%%, 相位=%.2f°\n', ...
+                    fft_preview_values(preview_idx), Channel, ...
+                    magnitude_ratio_all(freq_idx, Channel, preview_idx)*100, ...
+                    phase_lag_all(freq_idx, Channel, preview_idx));
         end
         fprintf('\n');
     end
 
-    % ========== 計算理論值 (temp zero phase) ==========
-    % temp zero phase: λf = 0，純延遲 2 步
-    % 振幅: A(θ) = kf * (1 + 2b*cos(θ) + b²)，沒有根號
-    % 相位: φ(θ) = -2θ（2 步純延遲）
+    % ========== 計算理論值 ==========
+    % 根據公式：A(θ; λf, b) = kf * sqrt((1 + 2b·cos θ + b²) / (1 - 2λf·cos θ + λf²))
+    % 當 λf = 0 時：A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
+    % 相位：φ(θ; d) = -(2 + d)θ，當 d=0 且 preview=2 時，相位補償後為 0
 
-    lambda_f = params.Value.lambda_f;  % 應為 0 (temp zero phase)
-    kf = (1 - lambda_f) / (1 + b_value)^2;  % temp zero phase: 1/(1+b)²
+    lambda_f = params.Value.lambda_f;  % 應為 0
+    kf = (1 - lambda_f) / (1 + b_value);  % kf = (1-λf)/(1+b)
 
     % 定義密集頻率點（讓理論曲線平滑）
     freq_theory = logspace(0, log10(5000), 500);  % 1 Hz ~ 5000 Hz，500 點
 
-    % 計算 temp zero phase 理論公式
+    % 計算理論振幅和相位
+    % A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
+    % φ(θ; d=0, preview=0) = -2θ（無 preview 補償，相位落後 2 個 sample）
+    % 主 Bode Plot 顯示的是 preview=0 的數據，所以理論相位應為 -2θ
     A_theory = zeros(size(freq_theory));
-    phi_theory = zeros(size(freq_theory));
+    phi_theory_deg = zeros(size(freq_theory));
+
+    for i = 1:length(freq_theory)
+        theta = 2*pi*freq_theory(i)*Ts;
+        A_theory(i) = kf * sqrt(1 + 2*b_value*cos(theta) + b_value^2);
+        phi_theory_deg(i) = -2*theta*(180/pi);  % -2θ（度）
+    end
+
+    % ========== 計算 Theory (No FF) - 無前饋濾波器的閉迴路響應 ==========
+    % 閉迴路轉移函數（無前饋，d=0）:
+    % Hcl(z^-1) = z^-(1+d) * kc * (1 + b*z^-1) / (1 - λc*z^-1)
+    % 當 d=0 時: Hcl(z^-1) = z^-1 * kc * (1 + b*z^-1) / (1 - λc*z^-1)
+    % kc = (1 - λc) / (1 + b)
+    % DC Gain: Hcl(z^-1=1) = kc * (1+b) / (1-λc) = 1
+
+    % 計算 kc = (1 - λc) / (1 + b)
+    kc = (1 - lambda_c) / (1 + b_value);
+
+    A_theory_noFF = zeros(size(freq_theory));
+    phi_theory_noFF = zeros(size(freq_theory));
 
     for i = 1:length(freq_theory)
         theta = 2*pi*freq_theory(i)*Ts;  % θ = ωT
+        z_inv = exp(-1j*theta);  % z^{-1} = e^{-jθ}
 
-        % temp zero phase 振幅: A(θ) = kf * |1 + b*z⁻¹|² = kf * (1 + 2b*cos(θ) + b²)
-        A_theory(i) = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+        % Hcl = z^-1 * kc * (1 + b*z^-1) / (1 - λc*z^-1)
+        Hcl_num = z_inv * kc * (1 + b_value * z_inv);  % 分子：z^-1 * kc * (1+b*z^-1)
+        Hcl_den = 1 - lambda_c * z_inv;                 % 分母：(1-λc*z^-1)
+        Hcl = Hcl_num / Hcl_den;
 
-        % temp zero phase 相位: φ(θ) = -2θ（2 步純延遲，對應 z⁻² 項）
-        phi_theory(i) = -2 * theta;
+        A_theory_noFF(i) = abs(Hcl);
+        phi_theory_noFF(i) = angle(Hcl) * (180/pi);
     end
-
-    % 轉換相位為度數
-    phi_theory_deg = phi_theory * (180/pi);
 
     % 為相容性保留 H_theory_save（使用實驗頻率點）
     H_theory_save = zeros(size(frequencies));
     for i = 1:length(frequencies)
         theta = 2*pi*frequencies(i)*Ts;
-        % temp zero phase 振幅公式
-        H_theory_save(i) = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+        H_theory_save(i) = kf * sqrt((1 + 2*b_value*cos(theta) + b_value^2) / ...
+                                     (1 - 2*lambda_f*cos(theta) + lambda_f^2));
     end
 
     % 儲存此 d 值的結果
     results(d_idx).d_value = d;
     results(d_idx).frequencies = frequencies;
-    results(d_idx).fft_delay_values = fft_delay_values;  % 儲存延遲值陣列
-    results(d_idx).magnitude_ratio = magnitude_ratio_all;  % 3D: freq x ch x fft_delay
-    results(d_idx).phase_lag = phase_lag_all;              % 3D: freq x ch x fft_delay
+    results(d_idx).fft_preview_values = fft_preview_values;  % 儲存 preview 值陣列
+    results(d_idx).magnitude_ratio = magnitude_ratio_all;  % 3D: freq x ch x fft_preview
+    results(d_idx).phase_lag = phase_lag_all;              % 3D: freq x ch x fft_preview
     results(d_idx).magnitude_dB = 20 * log10(magnitude_ratio_all);
     results(d_idx).sim_times = sim_times;
     results(d_idx).Channel = Channel;
     results(d_idx).fB_c = fB_c;
     results(d_idx).fB_e = fB_e;
 
-    % 理論值和誤差分析（使用第一個 fft_delay 值的結果）
+    % 理論值和誤差分析（使用第一個 fft_preview 值的結果）
     results(d_idx).theory.b_value = b_value;
     results(d_idx).theory.H_magnitude = H_theory_save;
     results(d_idx).theory.H_magnitude_dB = 20 * log10(H_theory_save);
-    % 對每個 fft_delay 計算誤差
-    for delay_idx = 1:num_fft_delays
-        mag_ch = magnitude_ratio_all(:, Channel, delay_idx);
+    % 對每個 fft_preview 計算誤差
+    for preview_idx = 1:num_fft_previews
+        mag_ch = magnitude_ratio_all(:, Channel, preview_idx);
         error_pct = abs(mag_ch - H_theory_save') ./ H_theory_save' * 100;
-        results(d_idx).theory.error_percent(:, delay_idx) = error_pct;
-        results(d_idx).theory.max_error_percent(delay_idx) = max(error_pct);
-        results(d_idx).theory.mean_error_percent(delay_idx) = mean(error_pct);
-        results(d_idx).theory.rms_error_percent(delay_idx) = sqrt(mean(error_pct.^2));
+        results(d_idx).theory.error_percent(:, preview_idx) = error_pct;
+        results(d_idx).theory.max_error_percent(preview_idx) = max(error_pct);
+        results(d_idx).theory.mean_error_percent(preview_idx) = mean(error_pct);
+        results(d_idx).theory.rms_error_percent(preview_idx) = sqrt(mean(error_pct.^2));
     end
 
     % 品質檢測結果
@@ -662,8 +684,8 @@ for d_idx = 1:num_d
     fig = figure('Name', sprintf('Frequency Response fB_f=%.0fHz (Ch P%d)', fB_f, Channel), ...
                  'Position', [100+50*d_idx, 100+50*d_idx, 1200, 800]);
 
-    % 計算線性增益比（使用第一個 fft_delay，即 delay=0）
-    magnitude_ratio = results(d_idx).magnitude_ratio(:, :, 1);  % 取第一個 fft_delay
+    % 計算線性增益比（使用第一個 fft_preview，即 preview=0）
+    magnitude_ratio = results(d_idx).magnitude_ratio(:, :, 1);  % 取第一個 fft_preview
 
     % ===== 上圖：Magnitude（線性刻度 0~1.25，所有通道）=====
     % 手動設定位置：[left, bottom, width, height]
@@ -678,15 +700,22 @@ for d_idx = 1:num_d
     % 定義理論曲線顏色
     theory_color = [0.5, 0.5, 0.5];  % 中灰色（50% 亮度）
 
-    % === 先畫理論曲線（底層，實線）===
-    % 只有 R-Controller 才顯示理論曲線
+    % === 先畫理論曲線（底層）===
+    % 只有 ZPETC 才顯示理論曲線
     plot_handle_theory = [];
+    plot_handle_theory_noFF = [];
     if d == 0 && ControllerType == 1
+        % Theory (有前饋): 實線
         plot_handle_theory = semilogx(freq_theory, A_theory, '-', ...
                                        'LineWidth', unified_linewidth, ...
                                        'Color', theory_color, ...
                                        'DisplayName', 'Theory');
         hold on;
+        % Theory (No FF): 虛線
+        plot_handle_theory_noFF = semilogx(freq_theory, A_theory_noFF, '--', ...
+                                            'LineWidth', unified_linewidth, ...
+                                            'Color', theory_color, ...
+                                            'DisplayName', 'Theory (No FF)');
     end
 
     % 儲存 plot handles 以便圖例對應
@@ -738,23 +767,29 @@ for d_idx = 1:num_d
     ax1.LineWidth = 2.5;  % 座標軸線加粗
     ax1.Box = 'on';  % 保留完整框線
 
-    % ===== 下圖：Phase（只顯示激勵通道，使用第一個 fft_delay）=====
+    % ===== 下圖：Phase（只顯示激勵通道，使用第一個 fft_preview）=====
     % 手動設定位置，與 Magnitude 圖高度相同
     subplot('Position', [0.1, 0.1, 0.85, 0.35]);
     hold on; grid off;  % 取消背景網格線
 
-    % === 先畫理論相位曲線（底層，實線）===
-    % 只有 R-Controller 才顯示理論曲線
+    % === 先畫理論相位曲線（底層）===
+    % 只有 ZPETC 才顯示理論曲線
     if d == 0 && ControllerType == 1
+        % Theory (有前饋): 實線
         plot_handle_theory_phase = semilogx(freq_theory, phi_theory_deg, '-', ...
                                             'LineWidth', unified_linewidth, ...
                                             'Color', theory_color, ...
                                             'DisplayName', 'Theory');
         hold on;
+        % Theory (No FF): 虛線
+        plot_handle_theory_noFF_phase = semilogx(freq_theory, phi_theory_noFF, '--', ...
+                                                  'LineWidth', unified_linewidth, ...
+                                                  'Color', theory_color, ...
+                                                  'DisplayName', 'Theory (No FF)');
     end
 
     % === 再畫實驗相位曲線（激發通道，虛線）===
-    phase_ch = results(d_idx).phase_lag(:, Channel, 1);  % 取第一個 fft_delay
+    phase_ch = results(d_idx).phase_lag(:, Channel, 1);  % 取第一個 fft_preview
 
     plot_handles_phase = semilogx(frequencies, phase_ch, ['--' markers{Channel}], ...
              'LineWidth', unified_linewidth, ...
@@ -784,11 +819,11 @@ for d_idx = 1:num_d
     % 回到 Magnitude 子圖
     subplot('Position', [0.1, 0.55, 0.85, 0.35]);
 
-    % 添加圖例（R-Controller: Theory 在最後，PI: 只有通道）
+    % 添加圖例（ZPETC: Theory 和 Theory (No FF) 在最後，PI: 只有通道）
     if d == 0 && ControllerType == 1 && ~isempty(plot_handle_theory)
-        legend_labels = {'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Theory'};
-        leg_mag = legend([plot_handles_mag; plot_handle_theory], legend_labels, ...
-               'Location', 'northoutside', 'NumColumns', 7, 'FontSize', 13, 'FontWeight', 'bold', ...
+        legend_labels = {'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Theory', 'Theory (No FF)'};
+        leg_mag = legend([plot_handles_mag; plot_handle_theory; plot_handle_theory_noFF], legend_labels, ...
+               'Location', 'northoutside', 'NumColumns', 8, 'FontSize', 12, 'FontWeight', 'bold', ...
                'Orientation', 'horizontal');
     else
         leg_mag = legend(plot_handles_mag, {'P1', 'P2', 'P3', 'P4', 'P5', 'P6'}, ...
@@ -814,20 +849,40 @@ for d_idx = 1:num_d
     freq_linear_bode = linspace(0, frequencies(end), 500);
 
     % 計算線性軸的理論振幅
+    % Theory: A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
     A_theory_linear = zeros(size(freq_linear_bode));
     for i = 1:length(freq_linear_bode)
         theta = 2*pi*freq_linear_bode(i)*Ts;
-        A_theory_linear(i) = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+        A_theory_linear(i) = kf * sqrt(1 + 2*b_value*cos(theta) + b_value^2);
     end
 
-    % 先畫理論曲線（只有 R-Controller）
+    % Theory (No FF): Hcl = z^-1 * kc * (1+b*z^-1) / (1-λc*z^-1)
+    A_theory_noFF_linear = zeros(size(freq_linear_bode));
+    for i = 1:length(freq_linear_bode)
+        theta = 2*pi*freq_linear_bode(i)*Ts;
+        z_inv = exp(-1j*theta);
+
+        Hcl_num = z_inv * kc * (1 + b_value * z_inv);
+        Hcl_den = 1 - lambda_c * z_inv;
+        Hcl = Hcl_num / Hcl_den;
+        A_theory_noFF_linear(i) = abs(Hcl);
+    end
+
+    % 先畫理論曲線（只有 ZPETC）
     plot_handle_theory_linear_bode = [];
+    plot_handle_theory_noFF_linear_bode = [];
     if d == 0 && ControllerType == 1
+        % Theory (有前饋): 實線
         plot_handle_theory_linear_bode = plot(freq_linear_bode, A_theory_linear, '-', ...
                                                'LineWidth', unified_linewidth, ...
                                                'Color', theory_color, ...
                                                'DisplayName', 'Theory');
         hold on;
+        % Theory (No FF): 虛線
+        plot_handle_theory_noFF_linear_bode = plot(freq_linear_bode, A_theory_noFF_linear, '--', ...
+                                                    'LineWidth', unified_linewidth, ...
+                                                    'Color', theory_color, ...
+                                                    'DisplayName', 'Theory (No FF)');
     end
 
     % 儲存 plot handles
@@ -872,16 +927,39 @@ for d_idx = 1:num_d
     subplot('Position', [0.1, 0.1, 0.85, 0.35]);
     hold on; grid off;
 
-    % 計算線性軸的理論相位（這是直線）
-    phi_theory_linear_bode = -2 * (2*pi*freq_linear_bode*Ts) * (180/pi);
+    % 計算線性軸的理論相位
+    % Theory (preview=0): 相位 = -2θ（與主 Bode Plot 一致，顯示 preview=0 的數據）
+    phi_theory_linear_bode = zeros(size(freq_linear_bode));
+    for i = 1:length(freq_linear_bode)
+        theta = 2*pi*freq_linear_bode(i)*Ts;
+        phi_theory_linear_bode(i) = -2*theta*(180/pi);  % -2θ（度）
+    end
 
-    % 先畫理論相位曲線（只有 R-Controller）
+    % Theory (No FF): Hcl = z^-1 * kc * (1+b*z^-1) / (1-λc*z^-1)
+    phi_theory_noFF_linear_bode = zeros(size(freq_linear_bode));
+    for i = 1:length(freq_linear_bode)
+        theta = 2*pi*freq_linear_bode(i)*Ts;
+        z_inv = exp(-1j*theta);
+
+        Hcl_num = z_inv * kc * (1 + b_value * z_inv);
+        Hcl_den = 1 - lambda_c * z_inv;
+        Hcl = Hcl_num / Hcl_den;
+        phi_theory_noFF_linear_bode(i) = angle(Hcl) * (180/pi);
+    end
+
+    % 先畫理論相位曲線（只有 ZPETC）
     if d == 0 && ControllerType == 1
+        % Theory (有前饋): 實線
         plot(freq_linear_bode, phi_theory_linear_bode, '-', ...
              'LineWidth', unified_linewidth, ...
              'Color', theory_color, ...
              'DisplayName', 'Theory');
         hold on;
+        % Theory (No FF): 虛線
+        plot(freq_linear_bode, phi_theory_noFF_linear_bode, '--', ...
+             'LineWidth', unified_linewidth, ...
+             'Color', theory_color, ...
+             'DisplayName', 'Theory (No FF)');
     end
 
     % 畫實驗相位曲線（激發通道）
@@ -909,9 +987,9 @@ for d_idx = 1:num_d
     subplot('Position', [0.1, 0.55, 0.85, 0.35]);
 
     if d == 0 && ControllerType == 1 && ~isempty(plot_handle_theory_linear_bode)
-        legend_labels_linear = {'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Theory'};
-        leg_mag_linear = legend([plot_handles_mag_linear; plot_handle_theory_linear_bode], legend_labels_linear, ...
-               'Location', 'northoutside', 'NumColumns', 7, 'FontSize', 13, 'FontWeight', 'bold', ...
+        legend_labels_linear = {'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Theory', 'Theory (No FF)'};
+        leg_mag_linear = legend([plot_handles_mag_linear; plot_handle_theory_linear_bode; plot_handle_theory_noFF_linear_bode], legend_labels_linear, ...
+               'Location', 'northoutside', 'NumColumns', 8, 'FontSize', 12, 'FontWeight', 'bold', ...
                'Orientation', 'horizontal');
     else
         leg_mag_linear = legend(plot_handles_mag_linear, {'P1', 'P2', 'P3', 'P4', 'P5', 'P6'}, ...
@@ -924,47 +1002,64 @@ for d_idx = 1:num_d
     fprintf('  ✓ 圖 %d (線性頻率軸): d=%d 完成\n', d_idx, d);
 end
 
-% === FFT Delay 比較圖（僅 R-Controller 且有多個 delay 值時顯示）===
-if num_fft_delays > 1 && ControllerType == 1
-    fprintf('  📊 繪製 FFT Delay 比較圖...\n');
+% === FFT Preview 比較圖（僅 ZPETC 且有多個 preview 值時顯示）===
+if num_fft_previews > 1 && ControllerType == 1
+    fprintf('  📊 繪製 FFT Preview 比較圖...\n');
 
-    % FFT delay 比較顏色
-    delay_colors = [
-        0.0000, 0.4470, 0.7410;  % delay=0: 藍色
-        0.8500, 0.3250, 0.0980;  % delay=2: 橘色
-        0.4660, 0.6740, 0.1880;  % delay=其他: 綠色
+    % FFT preview 比較顏色
+    preview_colors = [
+        0.0000, 0.4470, 0.7410;  % preview=0: 藍色
+        0.8500, 0.3250, 0.0980;  % preview=2: 橘色
+        0.4660, 0.6740, 0.1880;  % preview=其他: 綠色
         0.4940, 0.1840, 0.5560;  % 紫色
     ];
-    delay_markers = {'o', 's', '^', 'd'};
+    preview_markers = {'o', 's', '^', 'd'};
 
-    fig_delay_compare = figure('Name', 'FFT Delay Comparison', ...
+    fig_preview_compare = figure('Name', 'FFT Preview Comparison', ...
                                'Position', [300, 100, 1200, 800]);
 
     % ===== 上圖：Magnitude 比較 =====
     subplot('Position', [0.1, 0.55, 0.85, 0.35]);
     hold on; grid off;
 
-    % 先畫理論曲線
-    plot_handle_theory_delay = semilogx(freq_theory, A_theory, '-', ...
+    % 計算兩條理論振幅曲線
+    % preview=0 和 preview=2 的振幅相同: A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
+    % （preview 只影響相位，不影響振幅）
+    A_theory_preview0 = zeros(size(freq_theory));
+    A_theory_preview2 = zeros(size(freq_theory));
+    for i = 1:length(freq_theory)
+        theta = 2*pi*freq_theory(i)*Ts;
+        % A(θ; 0, b) = kf * sqrt(1 + 2b·cos(θ) + b²)
+        % 當 λf=0 時，kf = 1/(1+b)，所以 A = sqrt(1 + 2b·cos(θ) + b²) / (1+b)
+        A_theory_preview0(i) = kf * sqrt(1 + 2*b_value*cos(theta) + b_value^2);
+        A_theory_preview2(i) = A_theory_preview0(i);  % 振幅相同
+    end
+
+    % 先畫理論曲線（preview=0: 實線，preview=2: 虛線）
+    plot_handle_theory_preview0 = semilogx(freq_theory, A_theory_preview0, '-', ...
                                         'LineWidth', 3.5, ...
                                         'Color', theory_color, ...
-                                        'DisplayName', 'Theory');
+                                        'DisplayName', 'Theory (preview=0)');
+    plot_handle_theory_preview2 = semilogx(freq_theory, A_theory_preview2, '--', ...
+                                        'LineWidth', 3.5, ...
+                                        'Color', theory_color, ...
+                                        'DisplayName', 'Theory (preview=2)');
 
-    % 畫每個 fft_delay 的實驗曲線（只畫激勵通道）
-    plot_handles_delay_mag = gobjects(num_fft_delays, 1);
-    for delay_idx = 1:num_fft_delays
-        fft_delay = fft_delay_values(delay_idx);
-        mag_ch = results(1).magnitude_ratio(:, Channel, delay_idx);
+    % 畫每個 fft_preview 的實驗曲線（只畫激勵通道）
+    plot_handles_preview_mag = gobjects(num_fft_previews, 1);
+    for preview_idx = 1:num_fft_previews
+        fft_preview = fft_preview_values(preview_idx);
+        mag_ch = results(1).magnitude_ratio(:, Channel, preview_idx);
 
-        color_idx = min(delay_idx, size(delay_colors, 1));
-        plot_handles_delay_mag(delay_idx) = semilogx(frequencies, mag_ch, ...
-                 ['--' delay_markers{color_idx}], ...
+        color_idx = min(preview_idx, size(preview_colors, 1));
+        plot_handles_preview_mag(preview_idx) = semilogx(frequencies, mag_ch, ...
+                 ['--' preview_markers{color_idx}], ...
                  'LineWidth', 3.0, ...
-                 'Color', delay_colors(color_idx, :), ...
+                 'Color', preview_colors(color_idx, :), ...
                  'MarkerFaceColor', 'none', ...
-                 'MarkerEdgeColor', delay_colors(color_idx, :), ...
+                 'MarkerEdgeColor', preview_colors(color_idx, :), ...
                  'MarkerSize', 9, ...
-                 'DisplayName', sprintf('delay=%d', fft_delay));
+                 'DisplayName', sprintf('preview=%d', fft_preview));
     end
 
     ylim([0, 1.25]);
@@ -985,37 +1080,41 @@ if num_fft_delays > 1 && ControllerType == 1
     subplot('Position', [0.1, 0.1, 0.85, 0.35]);
     hold on; grid off;
 
-    % 計算兩條理論相位曲線
-    % delay=0 理論: φ = -2θ
-    phi_theory_delay0 = -2 * (2*pi*freq_theory*Ts) * (180/pi);
-    % delay=2 理論: φ = -2θ + 2θ = 0
-    phi_theory_delay2 = zeros(size(freq_theory));
+    % 計算兩條理論相位曲線（Zero Phase Error Tracking）
+    % preview=0 理論: φ = -2θ（無 preview 補償，相位落後 2 個 sample）
+    % preview=2 理論: φ = 0（有 preview 補償，達到零相位）
+    phi_theory_preview0 = zeros(size(freq_theory));
+    phi_theory_preview2 = zeros(size(freq_theory));  % 全部為 0
+    for i = 1:length(freq_theory)
+        theta = 2*pi*freq_theory(i)*Ts;
+        phi_theory_preview0(i) = -2*theta*(180/pi);  % -2θ（度）
+    end
 
-    % 先畫理論相位曲線（delay=0: 實線，delay=2: 虛線）
-    plot_theory_phase_delay0 = semilogx(freq_theory, phi_theory_delay0, '-', ...
+    % 先畫理論相位曲線（preview=0: 實線，preview=2: 虛線）
+    plot_theory_phase_preview0 = semilogx(freq_theory, phi_theory_preview0, '-', ...
              'LineWidth', 3.5, ...
              'Color', theory_color, ...
-             'DisplayName', 'Theory (delay=0)');
-    plot_theory_phase_delay2 = semilogx(freq_theory, phi_theory_delay2, '--', ...
+             'DisplayName', 'Theory (preview=0)');
+    plot_theory_phase_preview2 = semilogx(freq_theory, phi_theory_preview2, '--', ...
              'LineWidth', 3.5, ...
              'Color', theory_color, ...
-             'DisplayName', 'Theory (delay=2)');
+             'DisplayName', 'Theory (preview=2)');
 
-    % 畫每個 fft_delay 的相位曲線
-    plot_handles_delay_phase = gobjects(num_fft_delays, 1);
-    for delay_idx = 1:num_fft_delays
-        fft_delay = fft_delay_values(delay_idx);
-        phase_ch = results(1).phase_lag(:, Channel, delay_idx);
+    % 畫每個 fft_preview 的相位曲線
+    plot_handles_preview_phase = gobjects(num_fft_previews, 1);
+    for preview_idx = 1:num_fft_previews
+        fft_preview = fft_preview_values(preview_idx);
+        phase_ch = results(1).phase_lag(:, Channel, preview_idx);
 
-        color_idx = min(delay_idx, size(delay_colors, 1));
-        plot_handles_delay_phase(delay_idx) = semilogx(frequencies, phase_ch, ...
-                 ['--' delay_markers{color_idx}], ...
+        color_idx = min(preview_idx, size(preview_colors, 1));
+        plot_handles_preview_phase(preview_idx) = semilogx(frequencies, phase_ch, ...
+                 ['--' preview_markers{color_idx}], ...
                  'LineWidth', 3.0, ...
-                 'Color', delay_colors(color_idx, :), ...
+                 'Color', preview_colors(color_idx, :), ...
                  'MarkerFaceColor', 'none', ...
-                 'MarkerEdgeColor', delay_colors(color_idx, :), ...
+                 'MarkerEdgeColor', preview_colors(color_idx, :), ...
                  'MarkerSize', 9, ...
-                 'DisplayName', sprintf('delay=%d', fft_delay));
+                 'DisplayName', sprintf('preview=%d', fft_preview));
     end
 
     xlabel('Frequency (Hz)', 'FontSize', 22, 'FontWeight', 'bold');
@@ -1032,32 +1131,30 @@ if num_fft_delays > 1 && ControllerType == 1
     ax2.Box = 'on';
 
     % 添加統一圖例到最上方（包含所有曲線）
-    % 建立完整的圖例標籤（實驗 delay=0, delay=2, 理論 delay=0, 理論 delay=2）
-    legend_labels_all = cell(1, num_fft_delays + 2);
-    for delay_idx = 1:num_fft_delays
-        legend_labels_all{delay_idx} = sprintf('delay=%d', fft_delay_values(delay_idx));
+    % 建立完整的圖例標籤（實驗 preview=0, preview=2, 理論 preview=0, 理論 preview=2）
+    legend_labels_all = cell(1, num_fft_previews + 2);
+    for preview_idx = 1:num_fft_previews
+        legend_labels_all{preview_idx} = sprintf('preview=%d', fft_preview_values(preview_idx));
     end
-    legend_labels_all{num_fft_delays + 1} = 'Theory (delay=0)';
-    legend_labels_all{num_fft_delays + 2} = 'Theory (delay=2)';
+    legend_labels_all{num_fft_previews + 1} = 'Theory (preview=0)';
+    legend_labels_all{num_fft_previews + 2} = 'Theory (preview=2)';
 
     % 回到 Magnitude 子圖添加統一圖例
     subplot('Position', [0.1, 0.55, 0.85, 0.35]);
 
     % 合併所有 plot handles（實驗曲線 + 理論曲線）
-    % 注意：Magnitude 圖只有一條理論線，Phase 圖有兩條
-    % 為統一顯示，在 Magnitude 圖例中也加入 Phase 的理論線資訊
-    all_handles = [plot_handles_delay_mag; plot_handle_theory_delay; plot_theory_phase_delay2];
+    all_handles = [plot_handles_preview_mag; plot_handle_theory_preview0; plot_handle_theory_preview2];
 
     leg_unified = legend(all_handles, legend_labels_all, ...
-           'Location', 'northoutside', 'NumColumns', num_fft_delays + 2, ...
+           'Location', 'northoutside', 'NumColumns', num_fft_previews + 2, ...
            'FontSize', 12, 'FontWeight', 'bold', 'Orientation', 'horizontal');
     leg_unified.EdgeColor = [0 0 0];
     leg_unified.LineWidth = 2.0;
 
-    fprintf('  ✓ FFT Delay 比較圖完成\n');
-    fprintf('    已加入兩條理論相位線: delay=0 (φ=-2θ) 和 delay=2 (φ=0)\n');
+    fprintf('  ✓ FFT Preview 比較圖完成\n');
+    fprintf('    已加入理論曲線: preview=0 (振幅+相位) 和 preview=2 (振幅+相位)\n');
 
-    % === 新增：線性頻率軸的相位圖（顯示理論線為直線）===
+    % === 新增：線性頻率軸的相位圖 ===
     fprintf('  📊 繪製線性頻率軸相位圖...\n');
 
     fig_linear_phase = figure('Name', 'Phase vs Frequency (Linear Scale)', ...
@@ -1067,35 +1164,41 @@ if num_fft_delays > 1 && ControllerType == 1
     % 定義線性頻率點（讓理論曲線平滑）
     freq_linear = linspace(0, frequencies(end), 500);
 
-    % 計算理論相位（線性頻率軸上是直線）
-    phi_linear_delay0 = -2 * (2*pi*freq_linear*Ts) * (180/pi);
-    phi_linear_delay2 = zeros(size(freq_linear));
+    % 計算理論相位（Zero Phase Error Tracking）
+    % preview=0 理論: φ = -2θ（無 preview 補償，相位落後 2 個 sample）
+    % preview=2 理論: φ = 0（有 preview 補償，達到零相位）
+    phi_linear_preview0 = zeros(size(freq_linear));
+    phi_linear_preview2 = zeros(size(freq_linear));  % 全部為 0
+    for i = 1:length(freq_linear)
+        theta = 2*pi*freq_linear(i)*Ts;
+        phi_linear_preview0(i) = -2*theta*(180/pi);  % -2θ（度）
+    end
 
-    % 先畫理論相位曲線（delay=0: 實線，delay=2: 虛線）
-    plot_theory_linear_delay0 = plot(freq_linear, phi_linear_delay0, '-', ...
+    % 先畫理論相位曲線（preview=0: 實線，preview=2: 虛線）
+    plot_theory_linear_preview0 = plot(freq_linear, phi_linear_preview0, '-', ...
              'LineWidth', 3.5, ...
              'Color', theory_color, ...
-             'DisplayName', 'Theory (delay=0)');
-    plot_theory_linear_delay2 = plot(freq_linear, phi_linear_delay2, '--', ...
+             'DisplayName', 'Theory (preview=0)');
+    plot_theory_linear_preview2 = plot(freq_linear, phi_linear_preview2, '--', ...
              'LineWidth', 3.5, ...
              'Color', theory_color, ...
-             'DisplayName', 'Theory (delay=2)');
+             'DisplayName', 'Theory (preview=2)');
 
     % 畫實驗數據點
-    plot_handles_linear = gobjects(num_fft_delays, 1);
-    for delay_idx = 1:num_fft_delays
-        fft_delay = fft_delay_values(delay_idx);
-        phase_ch = results(1).phase_lag(:, Channel, delay_idx);
+    plot_handles_linear = gobjects(num_fft_previews, 1);
+    for preview_idx = 1:num_fft_previews
+        fft_preview = fft_preview_values(preview_idx);
+        phase_ch = results(1).phase_lag(:, Channel, preview_idx);
 
-        color_idx = min(delay_idx, size(delay_colors, 1));
-        plot_handles_linear(delay_idx) = plot(frequencies, phase_ch, ...
-                 ['--' delay_markers{color_idx}], ...
+        color_idx = min(preview_idx, size(preview_colors, 1));
+        plot_handles_linear(preview_idx) = plot(frequencies, phase_ch, ...
+                 ['--' preview_markers{color_idx}], ...
                  'LineWidth', 3.0, ...
-                 'Color', delay_colors(color_idx, :), ...
+                 'Color', preview_colors(color_idx, :), ...
                  'MarkerFaceColor', 'none', ...
-                 'MarkerEdgeColor', delay_colors(color_idx, :), ...
+                 'MarkerEdgeColor', preview_colors(color_idx, :), ...
                  'MarkerSize', 9, ...
-                 'DisplayName', sprintf('delay=%d', fft_delay));
+                 'DisplayName', sprintf('preview=%d', fft_preview));
     end
 
     xlabel('Frequency (Hz)', 'FontSize', 22, 'FontWeight', 'bold');
@@ -1109,9 +1212,9 @@ if num_fft_delays > 1 && ControllerType == 1
     ax_linear.Box = 'on';
 
     % 添加統一圖例到上方
-    all_handles_linear = [plot_handles_linear; plot_theory_linear_delay0; plot_theory_linear_delay2];
+    all_handles_linear = [plot_handles_linear; plot_theory_linear_preview0; plot_theory_linear_preview2];
     leg_linear = legend(all_handles_linear, legend_labels_all, ...
-           'Location', 'northoutside', 'NumColumns', num_fft_delays + 2, ...
+           'Location', 'northoutside', 'NumColumns', num_fft_previews + 2, ...
            'FontSize', 12, 'FontWeight', 'bold', 'Orientation', 'horizontal');
     leg_linear.EdgeColor = [0 0 0];
     leg_linear.LineWidth = 2.0;
@@ -1124,7 +1227,7 @@ if num_d == 2
     fig_compare = figure('Name', 'Phase Comparison (d=0 vs d=2)', ...
                          'Position', [200, 200, 1200, 600]);
 
-    % 提取兩個 d 值的相位（使用第一個 fft_delay）
+    % 提取兩個 d 值的相位（使用第一個 fft_preview）
     phase_d0 = results(1).phase_lag(:, Channel, 1);
     phase_d2 = results(2).phase_lag(:, Channel, 1);
 
@@ -1172,12 +1275,12 @@ for d_idx = 1:num_d
     fprintf('\n[ d = %d ]\n', d);
     fprintf('────────────────────────────────────────────────────────\n');
 
-    % 對每個 fft_delay 值顯示分析結果
-    for delay_idx = 1:num_fft_delays
-        fft_delay = fft_delay_values(delay_idx);
-        mag_dB = results(d_idx).magnitude_dB(:, Channel, delay_idx);
+    % 對每個 fft_preview 值顯示分析結果
+    for preview_idx = 1:num_fft_previews
+        fft_preview = fft_preview_values(preview_idx);
+        mag_dB = results(d_idx).magnitude_dB(:, Channel, preview_idx);
 
-        fprintf('\n  [FFT delay = %d samples]\n', fft_delay);
+        fprintf('\n  [FFT preview = %d samples]\n', fft_preview);
 
         % 找 -3dB 頻寬（修正版：使用內插）
         idx_below_3dB = find(mag_dB < -3, 1, 'first');
@@ -1213,15 +1316,15 @@ for d_idx = 1:num_d
         fprintf('    最大增益: %.2f dB at %.2f Hz\n', max_gain_dB, frequencies(max_idx));
 
         % 相位統計
-        phase_ch = results(d_idx).phase_lag(:, Channel, delay_idx);
+        phase_ch = results(d_idx).phase_lag(:, Channel, preview_idx);
         fprintf('    相位範圍: %.2f° ~ %.2f°\n', min(phase_ch), max(phase_ch));
         fprintf('    平均相位: %.2f°\n', mean(phase_ch));
 
         % 理論對比統計
         fprintf('\n    【理論對比分析 (b = %.4f)】\n', results(d_idx).theory.b_value);
-        fprintf('    最大誤差: %.2f%%\n', results(d_idx).theory.max_error_percent(delay_idx));
-        fprintf('    平均誤差: %.2f%%\n', results(d_idx).theory.mean_error_percent(delay_idx));
-        fprintf('    RMS 誤差: %.2f%%\n', results(d_idx).theory.rms_error_percent(delay_idx));
+        fprintf('    最大誤差: %.2f%%\n', results(d_idx).theory.max_error_percent(preview_idx));
+        fprintf('    平均誤差: %.2f%%\n', results(d_idx).theory.mean_error_percent(preview_idx));
+        fprintf('    RMS 誤差: %.2f%%\n', results(d_idx).theory.rms_error_percent(preview_idx));
     end
 
     fprintf('\n');
@@ -1274,7 +1377,7 @@ fprintf('\n═══════════════════════
 
 % 顯示相位差統計（如果有 d=0 和 d=2）
 if num_d == 2
-    phase_d0 = results(1).phase_lag(:, Channel, 1);  % 使用第一個 fft_delay
+    phase_d0 = results(1).phase_lag(:, Channel, 1);  % 使用第一個 fft_preview
     phase_d2 = results(2).phase_lag(:, Channel, 1);
     delta_phase = phase_d0 - phase_d2;
 
@@ -1314,13 +1417,13 @@ fprintf('───────────────────────�
 mat_filename = 'freq_sweep_data.mat';
 png_bode_filename = 'bode_plot.png';
 png_bode_linear_filename = 'bode_plot_linear.png';
-png_delay_compare_filename = 'fft_delay_comparison.png';
+png_preview_compare_filename = 'fft_preview_comparison.png';
 png_linear_phase_filename = 'phase_linear_scale.png';
 
 mat_path = fullfile(output_dir, mat_filename);
 png_bode_path = fullfile(output_dir, png_bode_filename);
 png_bode_linear_path = fullfile(output_dir, png_bode_linear_filename);
-png_delay_compare_path = fullfile(output_dir, png_delay_compare_filename);
+png_preview_compare_path = fullfile(output_dir, png_preview_compare_filename);
 png_linear_phase_path = fullfile(output_dir, png_linear_phase_filename);
 
 % 保存 .mat 檔案
@@ -1336,10 +1439,10 @@ fprintf('  ✓ Bode Plot 已保存: %s (%d DPI)\n', png_bode_filename, export_re
 exportgraphics(fig_bode_linear, png_bode_linear_path, 'Resolution', export_resolution);
 fprintf('  ✓ Bode Plot (線性頻率軸) 已保存: %s (%d DPI)\n', png_bode_linear_filename, export_resolution);
 
-% 保存 FFT Delay 比較圖和線性頻率軸相位圖（僅 R-Controller）
-if num_fft_delays > 1 && ControllerType == 1
-    exportgraphics(fig_delay_compare, png_delay_compare_path, 'Resolution', export_resolution);
-    fprintf('  ✓ FFT Delay 比較圖已保存: %s (%d DPI)\n', png_delay_compare_filename, export_resolution);
+% 保存 FFT Preview 比較圖和線性頻率軸相位圖（僅 ZPETC）
+if num_fft_previews > 1 && ControllerType == 1
+    exportgraphics(fig_preview_compare, png_preview_compare_path, 'Resolution', export_resolution);
+    fprintf('  ✓ FFT Preview 比較圖已保存: %s (%d DPI)\n', png_preview_compare_filename, export_resolution);
 
     exportgraphics(fig_linear_phase, png_linear_phase_path, 'Resolution', export_resolution);
     fprintf('  ✓ 線性頻率軸相位圖已保存: %s (%d DPI)\n', png_linear_phase_filename, export_resolution);
@@ -1358,11 +1461,11 @@ fprintf('\n');
 
 fprintf('【測試摘要】\n');
 if ControllerType == 1
-    fprintf('  控制器: R-Controller\n');
+    fprintf('  控制器: ZPETC (Zero Phase Error Tracking Controller)\n');
     fprintf('  前饋濾波器頻寬: %.1f kHz\n', fB_f/1000);
     fprintf('  控制器頻寬: %.1f kHz\n', fB_c/1000);
     fprintf('  估測器頻寬: %.1f kHz\n', fB_e/1000);
-    fprintf('  FFT 延遲值: [%s] samples\n', num2str(fft_delay_values));
+    fprintf('  FFT preview 值: [%s] samples\n', num2str(fft_preview_values));
 else
     fprintf('  控制器: PI-Controller\n');
     fprintf('  Kp: %.2f, Ki: %.2f (zc=%d)\n', Kp_value, Ki_value, zc);

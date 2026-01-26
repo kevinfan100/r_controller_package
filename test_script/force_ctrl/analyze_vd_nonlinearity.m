@@ -40,7 +40,7 @@ function results = analyze_vd_nonlinearity(varargin)
 %   % Extract THD for channel 5 (Z-axis related)
 %   thd_ch5 = results.thd_results(:, 5);
 %
-% Author: R-Controller Package Team
+% Author: ZPETC Package Team
 % Date: 2025-01-20
 
     % ========================================

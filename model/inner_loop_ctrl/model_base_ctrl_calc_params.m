@@ -1,5 +1,5 @@
 function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
-    % R Controller Parameter Calculator (with Bus Object creation)
+    % Zero Phase Error Tracking Controller (ZPETC) Parameter Calculator
     %
     % Calculate all controller coefficients from bandwidth parameters
     % and create the corresponding Simulink Bus Object definition.
@@ -42,7 +42,7 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     % ========================================
     % INTERMEDIATE PARAMETERS
     % ========================================
-    lambda_f = exp(-fB_f * 2 * pi * params.T);
+    lambda_f = 0;
     lambda_c = exp(-fB_c * 2 * pi * params.T);
     lambda_e = exp(-fB_e * 2 * pi * params.T);
 
@@ -91,17 +91,17 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     params.neg_beta = -beta;             % -beta
 
     % ========================================
-    % CONTROL LAW COEFFICIENTS
-    % (reuse existing parameters)
+    % CONTROL LAW COEFFICIENTS (PDF P4 步驟 8)
+    % uc[k] = λc·uc[k-1] + (kc+bc)·uc[k-2] + ku·{δvc[k] - a1·δvc[k-1] - a2·δvc[k-2]}
     % ========================================
-    % ku, a1, a2, one_S_bc, bc already defined above
+    params.kc_A_bc = kc + bc;  % kc + bc (PDF P4 步驟 8)
 
     % ========================================
     % CREATE SIMULINK BUS OBJECT
     % ========================================
     % Simulink requires explicit Bus Object definition for structures
     ParamsBus = Simulink.Bus;
-    ParamsBus.Description = 'R Controller Parameters Structure';
+    ParamsBus.Description = 'Zero Phase Error Tracking Controller Parameters';
 
     % Define all bus elements 
     elems(1) = Simulink.BusElement;
@@ -185,6 +185,10 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     elems(20).Name = 'neg_beta';
     elems(20).DataType = 'double';
 
+    elems(21) = Simulink.BusElement;
+    elems(21).Name = 'kc_A_bc';
+    elems(21).DataType = 'double';
+
     % Assign elements to bus
     ParamsBus.Elements = elems;
 
@@ -197,5 +201,5 @@ function params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f)
     params_data = params;  % Keep the raw data
     params = Simulink.Parameter(params_data);
     params.DataType = 'Bus: ParamsBus';
-    params.Description = 'R Controller Parameters';
+    params.Description = 'Zero Phase Error Tracking Controller Parameters';
 end

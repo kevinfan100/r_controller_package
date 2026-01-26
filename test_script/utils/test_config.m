@@ -37,7 +37,7 @@ function config = test_config(varargin)
 %   config = test_config('Type', 'inner_loop');
 %   params = model_base_ctrl_calc_params(config.fB_c, config.fB_e, config.fB_f);
 %
-% Author: R-Controller Package Team
+% Author: ZPETC Package Team
 % Date: 2025-01-17
 
     % Parse optional parameters
@@ -116,7 +116,7 @@ function config = test_config(varargin)
     end
 
     % ========================================================================
-    % PI Controller Parameters (alternative to R-Controller)
+    % PI Controller Parameters (alternative to ZPETC)
     % ========================================================================
     config.Kp_default = 2;                  % Default proportional gain
     config.zc_default = 2206;               % Default zero location [rad/s]

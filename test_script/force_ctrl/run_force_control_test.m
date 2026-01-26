@@ -4,7 +4,7 @@
 % This script demonstrates the complete force control pipeline:
 %   1. Set desired force signal f_d
 %   2. Call inverse_model to compute vd timeseries
-%   3. Execute Simulink simulation (R-Controller tracks vd)
+%   3. Execute Simulink simulation (ZPETC tracks vd)
 %   4. Call force_model to compute estimated force f_m
 %   5. Plot comparison graphs
 %
@@ -39,9 +39,9 @@ test_name = 'force_control_test';
 % 1.2 Controller Selection
 % ─────────────────────────────────────────────────────────────────────────
 % Select which controller to use:
-%   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
+%   'zpetc' - Zero Phase Error Tracking Controller (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'zpetc';   % 'zpetc' or 'pi_controller'
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -54,7 +54,7 @@ force_amplitude = 5.0;          % Force amplitude [pN]
 force_offset    = 0.0;
 
 % Sine mode parameters
-force_frequency = 50;           % Force frequency [Hz]
+force_frequency = 1;           % Force frequency [Hz]
 force_phase = 0;                % Phase [deg]
 
 % Step mode parameters
@@ -90,7 +90,7 @@ interp_method = 'linear';       % Interpolation method: 'linear' or 'previous' (
 USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ideal (non-causal)
 
 % ─────────────────────────────────────────────────────────────────────────
-% 1.6 R-Controller Parameters
+% 1.6 ZPETC (Zero Phase Error Tracking Controller) Parameters
 % ─────────────────────────────────────────────────────────────────────────
 % Preview samples: d shifts vd forward by d*Ts seconds
 % To compensate hardware interpolation delay:
@@ -112,7 +112,7 @@ Ki_value = Kp_value * zc;       % Integral gain (Ki = Kp * zc = 4412)
 % ─────────────────────────────────────────────────────────────────────────
 % 1.8 Simulink Integration
 % ─────────────────────────────────────────────────────────────────────────
-USE_SIMULINK = true;            % true: use Simulink R-Controller
+USE_SIMULINK = true;            % true: use Simulink ZPETC
                                  % false: assume perfect tracking (vm = vd)
 
 % ─────────────────────────────────────────────────────────────────────────
@@ -144,14 +144,14 @@ fprintf('───────────────────────�
 
 % Validate controller type
 controller_type = lower(controller_type);
-if ~ismember(controller_type, {'r_controller', 'pi_controller'})
-    error('Invalid controller_type: %s. Use ''r_controller'' or ''pi_controller''.', controller_type);
+if ~ismember(controller_type, {'zpetc', 'pi_controller'})
+    error('Invalid controller_type: %s. Use ''zpetc'' or ''pi_controller''.', controller_type);
 end
 
-% Set ControllerType for Simulink (1=R-Controller, 2=PI-Controller)
-if strcmpi(controller_type, 'r_controller')
+% Set ControllerType for Simulink (1=ZPETC, 2=PI-Controller)
+if strcmpi(controller_type, 'zpetc')
     ControllerType = 1;
-    controller_label = 'R-Controller';
+    controller_label = 'ZPETC';
 else
     ControllerType = 2;
     controller_label = 'PI-Controller';
@@ -160,7 +160,7 @@ end
 % Load system parameters (for Phase 2 models)
 inv_params = system_params();
 
-% Load R-Controller parameters
+% Load ZPETC parameters
 ctrl_params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
 
 % System constants
@@ -191,7 +191,7 @@ if strcmpi(generation_mode, 'hardware')
         pos_update_rate, interp_method, string(USE_REALTIME_INTERP));
 end
 if ControllerType == 1
-    fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  ZPETC: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
     if d > 0
         fprintf('  Preview: d=%d samples (%.1f us lookahead)\n', d, d*Ts*1e6);
     end
@@ -216,7 +216,7 @@ end
 % ─────────────────────────────────────────────────────────────────────────
 % 3.1 Define time axis
 % ─────────────────────────────────────────────────────────────────────────
-Ts_ctrl = Ts;                           % 100 kHz (R-Controller)
+Ts_ctrl = Ts;                           % 100 kHz (ZPETC)
 N_ctrl = round(sim_time / Ts_ctrl) + 1;
 t_ctrl = (0:N_ctrl-1)' * Ts_ctrl;       % 100 kHz time axis
 
@@ -674,7 +674,7 @@ if ENABLE_PLOT
         tab_handles.control_input = tab5;
 
         % Extract u from simulation output based on controller type
-        if ControllerType == 1  % R-Controller
+        if ControllerType == 1  % ZPETC
             u_data = out.u;
         else  % PI-Controller
             u_data = out.u_pi;
@@ -682,7 +682,7 @@ if ENABLE_PLOT
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
         if ControllerType == 1
-            ctrl_param_str = sprintf('R-Controller (fB: f=%d, c=%d, e=%d Hz)', fB_f, fB_c, fB_e);
+            ctrl_param_str = sprintf('ZPETC (fB: f=%d, c=%d, e=%d Hz)', fB_f, fB_c, fB_e);
         else
             ctrl_param_str = sprintf('PI-Controller (Kp=%.1f, Ki=%.1f)', Kp_value, Ki_value);
         end

@@ -2,7 +2,7 @@
 % Force Control Frequency Response Test - Bode Plot Analysis
 %
 % This script measures the frequency response of the force control pipeline:
-%   f_d (desired force) -> Inverse Model -> v_d -> R-Controller -> v_m -> Force Model -> f_m
+%   f_d (desired force) -> Inverse Model -> v_d -> ZPETC -> v_m -> Force Model -> f_m
 %
 % Features:
 %   1. Sweep through multiple frequency points (1 Hz ~ 2 kHz, 14 points)
@@ -36,9 +36,9 @@ addpath(fullfile(package_root, 'model', 'flux_allocation'));
 % 1.1 Controller Selection
 % -------------------------------------------------------------------------
 % Select which controller to use:
-%   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
+%   'zpetc' - ZPETC (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'pi_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'pi_controller';   % 'zpetc' or 'pi_controller'
 
 % -------------------------------------------------------------------------
 % 1.2 Force Direction (single axis)
@@ -93,7 +93,7 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay for linear)
                                 % false = Ideal (non-causal interpolation)
 
 % -------------------------------------------------------------------------
-% 1.7 R-Controller Bandwidth
+% 1.7 ZPETC Bandwidth
 % -------------------------------------------------------------------------
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
 fB_c = 1000;                    % Controller bandwidth [Hz]
@@ -162,14 +162,14 @@ Ts = 1e-5;                      % Sampling time [s] (100 kHz)
 
 % Validate controller type
 controller_type = lower(controller_type);
-if ~ismember(controller_type, {'r_controller', 'pi_controller'})
-    error('Invalid controller_type: %s. Use ''r_controller'' or ''pi_controller''.', controller_type);
+if ~ismember(controller_type, {'zpetc', 'pi_controller'})
+    error('Invalid controller_type: %s. Use ''zpetc'' or ''pi_controller''.', controller_type);
 end
 
-% Set ControllerType for Simulink (1=R-Controller, 2=PI-Controller)
-if strcmpi(controller_type, 'r_controller')
+% Set ControllerType for Simulink (1=ZPETC, 2=PI-Controller)
+if strcmpi(controller_type, 'zpetc')
     ControllerType = 1;
-    controller_label = 'R-Controller';
+    controller_label = 'ZPETC';
 else
     ControllerType = 2;
     controller_label = 'PI-Controller';
@@ -178,7 +178,7 @@ end
 % Load system parameters (for inverse_model / force_model)
 inv_params = system_params();
 
-% Load R-Controller parameters
+% Load ZPETC parameters
 ctrl_params = model_base_ctrl_calc_params(fB_c, fB_e, fB_f);
 
 % Set force direction vector based on axis selection
@@ -207,7 +207,7 @@ fprintf('  Bead position: [%.1f, %.1f, %.1f] um\n', bead_position);
 fprintf('  Frequency range: %.1f Hz ~ %.1f Hz (%d points)\n', ...
         frequencies(1), frequencies(end), length(frequencies));
 if ControllerType == 1
-    fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  ZPETC: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
@@ -265,7 +265,7 @@ end
 
 % Create output directory
 test_timestamp = datestr(now, 'yyyymmdd_HHMMSS');
-ctrl_short = {'r_ctrl', 'pi_ctrl'};
+ctrl_short = {'zpetc', 'pi_ctrl'};
 test_folder_name = sprintf('%s_%s_axis_%s', ctrl_short{ControllerType}, force_axis, test_timestamp);
 test_dir = fullfile(output_dir, test_folder_name);
 if ~exist(test_dir, 'dir')
@@ -322,7 +322,7 @@ for freq_idx = 1:num_freq
     % 3.1 Define Time Axes (Hardware Constraint Mode)
     % ---------------------------------------------------------------------
     % Two time axes: 100 kHz (controller) and pos_update_rate Hz (position)
-    Ts_ctrl = Ts;                           % 100 kHz (R-Controller)
+    Ts_ctrl = Ts;                           % 100 kHz (ZPETC)
     Ts_pos  = 1 / pos_update_rate;          % 1600 Hz (Position update)
 
     N_ctrl = round(sim_time / Ts_ctrl) + 1;
@@ -802,7 +802,7 @@ if ControllerType == 2  % PI mode - include Theory curve
         {axis_labels{1}, axis_labels{2}, axis_labels{3}, 'Theory'}, ...
         'Location', 'northoutside', 'NumColumns', 4, ...
         'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
-else  % R-Controller mode
+else  % ZPETC mode
     lgd = legend(plot_handles_mag, 'Location', 'northoutside', 'NumColumns', 3, ...
         'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
 end

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-R-Controller Package: A MATLAB/Simulink implementation of an R-Controller for magnetic tweezers, controlling 6-pole electromagnetic actuators for precision biological force measurement at piconewton scale.
+ZPETC Package: A MATLAB/Simulink implementation of a Zero Phase Error Tracking Controller (ZPETC) for magnetic tweezers, controlling 6-pole electromagnetic actuators for precision biological force measurement at piconewton scale.
 
 ## Directory Structure
 
@@ -67,7 +67,7 @@ run('test_script/force_ctrl/run_force_bode_test.m')
 ### Signal Flow
 
 ```
-Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) → Plant → v_m → Force Model → f_m
+Desired Force (f_d) → Inverse Model → v_d → ZPETC → u (currents) → Plant → v_m → Force Model → f_m
 ```
 
 ### Key Files
@@ -123,13 +123,13 @@ Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) 
 
 ## Controller Parameters
 
-### R-Controller Bandwidths
+### ZPETC Bandwidths
 
 - `fB_f` - Feedforward filter bandwidth [Hz]
 - `fB_c` - Control bandwidth [Hz]
 - `fB_e` - Estimator bandwidth [Hz]
 
-### PI Controller (Alternative)
+### PI Controller (Alternative to ZPETC)
 
 - `Kp_value` - Proportional gain
 - `Ki_value` - Integral gain (Ki = Kp × zc)

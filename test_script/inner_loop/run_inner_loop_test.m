@@ -137,7 +137,7 @@ end
 
 fprintf('\n');
 fprintf('════════════════════════════════════════════════════════════\n');
-fprintf('           R Controller 自動化測試\n');
+fprintf('           ZPETC 自動化測試\n');
 fprintf('════════════════════════════════════════════════════════════\n');
 fprintf('\n');
 
@@ -250,7 +250,7 @@ assignin('base', 'params', params);
 assignin('base', 'Kp_value', Kp_value);
 assignin('base', 'Ki_value', Ki_value);
 
-% 控制器類型 (1=R-Controller, 2=PI-Controller)
+% 控制器類型 (1=ZPETC, 2=PI-Controller)
 ControllerType = 1;
 assignin('base', 'ControllerType', ControllerType);
 
@@ -709,7 +709,7 @@ if ENABLE_PLOT
     fprintf('────────────────────────\n');
 
     % === 建立 Tab Figure ===
-    fig_main = uifigure('Name', sprintf('R-Controller Test: %s', test_name), ...
+    fig_main = uifigure('Name', sprintf('ZPETC Test: %s', test_name), ...
                         'Position', [50 50 1400 900]);
     tabgroup = uitabgroup(fig_main);
     tabgroup.Units = 'normalized';
@@ -1290,7 +1290,7 @@ fprintf('  信號: %s, P%d, %.3f V\n', signal_type_name, Channel, Amplitude);
 if strcmpi(signal_type_name, 'sine')
     fprintf('  頻率: %.1f Hz\n', Frequency);
 end
-fprintf('  R Controller 參數: d=%d, fB_c=%d Hz, fB_e=%d Hz\n', d, fB_c, fB_e);
+fprintf('  ZPETC 參數: d=%d, fB_c=%d Hz, fB_e=%d Hz\n', d, fB_c, fB_e);
 fprintf('  執行時間: %.2f 秒\n', elapsed_time);
 
 fprintf('\n');

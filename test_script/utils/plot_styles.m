@@ -24,7 +24,7 @@ function styles = plot_styles()
 %   plot(x, y, 'Color', styles.channel_colors(1,:), ...
 %        'LineWidth', styles.measurement_linewidth);
 %
-% Author: R-Controller Package Team
+% Author: ZPETC Package Team
 % Date: 2025-01-17
 
     % ========================================================================
