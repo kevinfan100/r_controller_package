@@ -39,9 +39,9 @@ h_min = 1.1 * 2.25;                  % Minimum safe distance [um]
 % === Motion Control Parameters ===
 ctrl_enable = true;             % true=closed-loop, false=open-loop
 lambda_c = 0.7;                 % Closed-loop pole (0 < lambda < 1)
-delay_comp_enable = true;       % d=2
+delay_comp_enable = false;       % d=2
 noise_filter_enable = false;    % Feedback low-pass filter
-noise_filter_cutoff = 10;       % Filter cutoff frequency [Hz]
+noise_filter_cutoff = 3;       % Filter cutoff frequency [Hz]
 
 % Delay steps: automatically set based on delay_comp_enable
 % - delay_comp_enable = true  → delay_steps = 2 (simulate measurement delay)
@@ -300,16 +300,24 @@ end
 fprintf('[Data Extraction]\n');
 fprintf('------------------------\n');
 
-% Position data (from Motion Control)
+% Position data (1600 Hz native, logged at 100 kHz via ZOH)
 p_d_out = out.p_d;
 p_m_out = out.p_m;
-f_d_out = out.f_m;
+
+% Force data - Motion Control mode
+% f_d_ctrl: Control force from motion controller (1600 Hz)
+% f_d_interp: Interpolated force sent to inverse model (100 kHz)
+% f_m: Measured/estimated force from force model (100 kHz)
+f_d_ctrl = out.f_d_ctrl;
+f_d_interp = out.f_d_interp_motion;
+f_m_out = out.f_m;
 
 % Get thermal force if available
-if isfield(out, 'F_th')
+% Note: out is Simulink.SimulationOutput, use ismember instead of isfield
+if ismember('F_th', out.who)
     F_th_out = out.F_th;
 else
-    F_th_out = zeros(size(f_d_out));
+    F_th_out = zeros(size(f_m_out));
 end
 
 % Inner loop data (100 kHz rate)
@@ -341,11 +349,12 @@ fprintf('  Inner Loop data: %d samples (%.2f s) @ 100 kHz\n', N_inner, t_inner(e
 fprintf('  (Motion Control updates at %d Hz internally)\n', pos_update_rate);
 
 % -------------------------------------------------------------------------
-% Post-processing: Apply interpolation to p_d, f_d based on sample_rate_mode
-% This makes the analysis consistent with vd interpolation behavior
+% Post-processing: Apply interpolation to 1600 Hz signals
+% p_d, p_m, f_d_ctrl are at 1600 Hz (need interpolation)
+% f_d_interp, f_m are already at 100 kHz (no interpolation needed)
 % -------------------------------------------------------------------------
 if sample_rate_mode == 2  % Linear interpolation mode
-    fprintf('  Applying linear interpolation to p_d, f_d (post-processing)...\n');
+    fprintf('  Applying linear interpolation to 1600 Hz signals...\n');
 
     % Calculate 1600 Hz sample indices
     Ts_motion = 1/pos_update_rate;
@@ -359,25 +368,32 @@ if sample_rate_mode == 2  % Linear interpolation mode
 
     t_1600 = t_motion(idx_1600);
 
-    % Linear interpolation for p_d
+    % Linear interpolation for p_d (1600 Hz → 100 kHz)
     p_d_1600 = p_d_out(idx_1600, :);
     for i = 1:3
         p_d_out(:, i) = interp1(t_1600, p_d_1600(:, i), t_motion, 'linear', 'extrap');
     end
 
-    % Linear interpolation for f_d
-    f_d_1600 = f_d_out(idx_1600, :);
+    % Linear interpolation for p_m (1600 Hz → 100 kHz)
+    p_m_1600 = p_m_out(idx_1600, :);
     for i = 1:3
-        f_d_out(:, i) = interp1(t_1600, f_d_1600(:, i), t_motion, 'linear', 'extrap');
+        p_m_out(:, i) = interp1(t_1600, p_m_1600(:, i), t_motion, 'linear', 'extrap');
     end
 
-    fprintf('  Done (1600 Hz → 100 kHz linear interpolation)\n');
+    % Linear interpolation for f_d_ctrl (1600 Hz → 100 kHz)
+    f_d_ctrl_1600 = f_d_ctrl(idx_1600, :);
+    for i = 1:3
+        f_d_ctrl(:, i) = interp1(t_1600, f_d_ctrl_1600(:, i), t_motion, 'linear', 'extrap');
+    end
+
+    fprintf('  Done (p_d, p_m, f_d_ctrl: 1600 Hz → 100 kHz)\n');
+    fprintf('  f_d_interp, f_m: already at 100 kHz (no interpolation)\n');
 
 elseif sample_rate_mode == 1  % ZOH mode
-    fprintf('  ZOH mode: p_d, f_d remain as 1600 Hz step data\n');
+    fprintf('  ZOH mode: 1600 Hz signals show step changes\n');
 
 else  % Direct mode (mode=3)
-    fprintf('  Direct mode: p_d, f_d at native rate (no interpolation needed)\n');
+    fprintf('  Direct mode: all signals at 100 kHz\n');
 end
 
 %% SECTION 9: Analysis
@@ -397,10 +413,23 @@ fprintf('    X: %.2f nm, Y: %.2f nm, Z: %.2f nm\n', rms_error_nm(1), rms_error_n
 fprintf('  Position Max Error:\n');
 fprintf('    X: %.2f nm, Y: %.2f nm, Z: %.2f nm\n', max_error_nm(1), max_error_nm(2), max_error_nm(3));
 
-% Control force statistics
-max_force = max(abs(f_d_out), [], 1);
-fprintf('  Max Control Force:\n');
-fprintf('    Fx: %.2f pN, Fy: %.2f pN, Fz: %.2f pN\n', max_force(1), max_force(2), max_force(3));
+% Force tracking error (f_d_interp vs f_m, both at 100 kHz)
+f_error = f_d_interp - f_m_out;
+rms_force_error = sqrt(mean(f_error.^2, 1));
+max_force_error = max(abs(f_error), [], 1);
+
+fprintf('  Force Tracking RMS Error (f_d_interp - f_m):\n');
+fprintf('    Fx: %.3f pN, Fy: %.3f pN, Fz: %.3f pN\n', ...
+    rms_force_error(1), rms_force_error(2), rms_force_error(3));
+fprintf('  Force Tracking Max Error:\n');
+fprintf('    Fx: %.3f pN, Fy: %.3f pN, Fz: %.3f pN\n', ...
+    max_force_error(1), max_force_error(2), max_force_error(3));
+
+% Control force statistics (from motion controller)
+max_ctrl_force = max(abs(f_d_ctrl), [], 1);
+fprintf('  Max Control Force (f_d_ctrl):\n');
+fprintf('    Fx: %.2f pN, Fy: %.2f pN, Fz: %.2f pN\n', ...
+    max_ctrl_force(1), max_ctrl_force(2), max_ctrl_force(3));
 
 % Wall distance monitoring
 w_hat = particle_params.Value.w_hat;
@@ -448,22 +477,22 @@ if ENABLE_PLOT
     tab1 = create_3d_trajectory_tab(tabgroup, p_d_out, p_m_out, particle_params.Value, styles);
     fprintf('  Tab 1: 3D Trajectory\n');
 
-    % Tab 2-4: XYZ Axis Analysis
-    tab2 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 1, 'X', styles);
+    % Tab 2-4: XYZ Axis Analysis (shows f_d_ctrl for control force)
+    tab2 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_ctrl, f_m_out, 1, 'X', styles);
     fprintf('  Tab 2: X-axis Analysis\n');
 
-    tab3 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 2, 'Y', styles);
+    tab3 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_ctrl, f_m_out, 2, 'Y', styles);
     fprintf('  Tab 3: Y-axis Analysis\n');
 
-    tab4 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_out, 3, 'Z', styles);
+    tab4 = create_axis_analysis_tab(tabgroup, t_motion, p_d_out, p_m_out, f_d_ctrl, f_m_out, 3, 'Z', styles);
     fprintf('  Tab 4: Z-axis Analysis\n');
 
     % Tab 5: Position Overview
     tab5 = create_position_overview_tab(tabgroup, t_motion, p_d_out, p_m_out, styles);
     fprintf('  Tab 5: Position Overview\n');
 
-    % Tab 6: Force Overview
-    tab6 = create_force_overview_tab(tabgroup, t_motion, f_d_out, styles);
+    % Tab 6: Force Overview (shows f_d_interp vs f_m comparison)
+    tab6 = create_force_overview_tab(tabgroup, t_motion, f_d_interp, f_m_out, styles);
     fprintf('  Tab 6: Force Overview\n');
 
     % Tab 7: Voltage Tracking (6 channels)
@@ -537,7 +566,9 @@ if SAVE_PNG || SAVE_MAT
         result.motion.t = t_motion;
         result.motion.p_d = p_d_out;
         result.motion.p_m = p_m_out;
-        result.motion.f_d = f_d_out;
+        result.motion.f_d_ctrl = f_d_ctrl;      % Control force (1600 Hz → interpolated)
+        result.motion.f_d_interp = f_d_interp;  % Interpolated force (100 kHz)
+        result.motion.f_m = f_m_out;            % Measured/estimated force (100 kHz)
         result.motion.F_th = F_th_out;
 
         % Inner Loop data
@@ -549,7 +580,9 @@ if SAVE_PNG || SAVE_MAT
         % Analysis results
         result.analysis.rms_error_nm = rms_error_nm;
         result.analysis.max_error_nm = max_error_nm;
-        result.analysis.max_force = max_force;
+        result.analysis.rms_force_error = rms_force_error;  % f_d_interp - f_m
+        result.analysis.max_force_error = max_force_error;  % f_d_interp - f_m
+        result.analysis.max_ctrl_force = max_ctrl_force;    % f_d_ctrl max
         result.analysis.h_min_sim = h_min_sim;
         result.analysis.v_rms_error = v_rms_error;
 
@@ -574,8 +607,10 @@ fprintf('[Summary]\n');
 fprintf('  Test: %s (%s)\n', test_name, traj_type);
 fprintf('  Position RMS Error: X=%.1f nm, Y=%.1f nm, Z=%.1f nm\n', ...
     rms_error_nm(1), rms_error_nm(2), rms_error_nm(3));
-fprintf('  Max Force: Fx=%.1f pN, Fy=%.1f pN, Fz=%.1f pN\n', ...
-    max_force(1), max_force(2), max_force(3));
+fprintf('  Force Tracking RMS Error: Fx=%.3f pN, Fy=%.3f pN, Fz=%.3f pN\n', ...
+    rms_force_error(1), rms_force_error(2), rms_force_error(3));
+fprintf('  Max Control Force: Fx=%.1f pN, Fy=%.1f pN, Fz=%.1f pN\n', ...
+    max_ctrl_force(1), max_ctrl_force(2), max_ctrl_force(3));
 fprintf('  Min Wall Distance: %.3f um (h/R=%.2f)\n', h_min_sim, h_min_sim/particle_params.Value.R);
 fprintf('  Elapsed time: %.2f s\n\n', elapsed_time);
 
@@ -690,7 +725,7 @@ function tab = create_3d_trajectory_tab(tabgroup, p_d, p_m, particle_params, sty
     ax.LineWidth = styles.axis_linewidth;
 end
 
-function tab = create_axis_analysis_tab(tabgroup, t, p_d, p_m, f_d, axis_idx, axis_name, styles)
+function tab = create_axis_analysis_tab(tabgroup, t, p_d, p_m, f_d_ctrl, f_m, axis_idx, axis_name, styles)
     tab = uitab(tabgroup, 'Title', sprintf('%s-axis', axis_name));
     tl = tiledlayout(tab, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
     title(tl, sprintf('%s-axis Analysis', axis_name), ...
@@ -722,14 +757,18 @@ function tab = create_axis_analysis_tab(tabgroup, t, p_d, p_m, f_d, axis_idx, ax
     grid(ax2, 'on');
     ax2.LineWidth = styles.axis_linewidth;
 
-    % Subplot 3: Control force
+    % Subplot 3: Force tracking (f_d_ctrl vs f_m)
     ax3 = nexttile(tl);
-    plot(ax3, t*1000, f_d(:,axis_idx), 'Color', colors(axis_idx,:), ...
+    plot(ax3, t*1000, f_d_ctrl(:,axis_idx), 'b-', ...
+        'LineWidth', styles.reference_linewidth);
+    hold(ax3, 'on');
+    plot(ax3, t*1000, f_m(:,axis_idx), 'r--', ...
         'LineWidth', styles.measurement_linewidth);
     xlabel(ax3, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
     ylabel(ax3, 'Force [pN]', 'FontSize', styles.ylabel_fontsize);
-    title(ax3, sprintf('Control Force (Max: %.1f pN)', max(abs(f_d(:,axis_idx)))), ...
+    title(ax3, sprintf('Force Tracking (Max f_d: %.1f pN)', max(abs(f_d_ctrl(:,axis_idx)))), ...
         'FontSize', styles.title_fontsize-2);
+    legend(ax3, {'f_d (ctrl)', 'f_m'}, 'Location', 'best', 'FontSize', styles.legend_fontsize);
     grid(ax3, 'on');
     ax3.LineWidth = styles.axis_linewidth;
 end
@@ -758,21 +797,32 @@ function tab = create_position_overview_tab(tabgroup, t, p_d, p_m, styles)
     end
 end
 
-function tab = create_force_overview_tab(tabgroup, t, f_d, styles)
+function tab = create_force_overview_tab(tabgroup, t, f_d_interp, f_m, styles)
     tab = uitab(tabgroup, 'Title', 'Force Overview');
     tl = tiledlayout(tab, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
-    title(tl, 'Control Force Overview', 'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
+    title(tl, 'Force Tracking Overview (f_d_interp vs f_m)', ...
+        'FontSize', styles.title_fontsize, 'FontWeight', 'bold');
 
     axis_names = {'Fx', 'Fy', 'Fz'};
     colors = styles.force_colors;
 
     for i = 1:3
         ax = nexttile(tl);
-        plot(ax, t*1000, f_d(:,i), 'Color', colors(i,:), 'LineWidth', styles.measurement_linewidth);
+        plot(ax, t*1000, f_d_interp(:,i), 'b-', 'LineWidth', styles.reference_linewidth);
+        hold(ax, 'on');
+        plot(ax, t*1000, f_m(:,i), '--', 'Color', colors(i,:), 'LineWidth', styles.measurement_linewidth);
+
+        % Calculate RMS error for this axis
+        f_error = f_d_interp(:,i) - f_m(:,i);
+        rms_err = sqrt(mean(f_error.^2));
+
         xlabel(ax, 'Time [ms]', 'FontSize', styles.xlabel_fontsize);
         ylabel(ax, sprintf('%s [pN]', axis_names{i}), 'FontSize', styles.ylabel_fontsize);
-        title(ax, sprintf('%s (Max: %.1f pN)', axis_names{i}, max(abs(f_d(:,i)))), ...
+        title(ax, sprintf('%s (RMS error: %.3f pN)', axis_names{i}, rms_err), ...
             'FontSize', styles.title_fontsize-2);
+        if i == 1
+            legend(ax, {'f_d (interp)', 'f_m'}, 'Location', 'best', 'FontSize', styles.legend_fontsize);
+        end
         grid(ax, 'on');
         ax.LineWidth = styles.axis_linewidth;
     end
