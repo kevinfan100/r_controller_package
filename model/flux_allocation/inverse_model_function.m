@@ -13,6 +13,7 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
 %                .pos_m            - Bead position (3x1) [um] (used when pos_m_source=0)
 %                .pos_m_source     - 0=static (from params), 1=dynamic (from external)
 %                .sample_rate_mode - 1=ZOH, 2=Linear, 3=Direct
+%                .pos_m_interp_enable - 0=ZOH (default), 1=Linear interpolation for pos_m
 %                .T_m2a            - Measuring to Actuator transform (3x3)
 %                .g_H              - Force gain [pN/V^2]
 %                .force_scale      - Force scaling factor
@@ -29,6 +30,10 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
 %   2 (Linear) - Linear interpolation of f_d at 1600 Hz, compute vd every step
 %   3 (Direct) - Direct execution at 100 kHz (no rate transition)
 %
+% pos_m Interpolation:
+%   pos_m_interp_enable = 0: ZOH (default, current behavior)
+%   pos_m_interp_enable = 1: Linear interpolation (experimental)
+%
 % Interpolation Method (FPGA-compatible):
 %   - Fixed frame_period = 62.5 steps (matches FPGA: 62500 @ 100MHz / 1000 divider)
 %   - Alpha = phase_counter / 62.5, range [0, ~0.992]
@@ -40,10 +45,13 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
 
     persistent fd_prev fd_curr phase_counter initialized first_boundary
     persistent phase_accumulator  % Fractional accumulator for precise 1600 Hz boundary
+    persistent pm_prev pm_curr    % For pos_m interpolation
 
     if isempty(initialized)
         fd_prev = zeros(3, 1);
         fd_curr = zeros(3, 1);
+        pm_prev = zeros(3, 1);
+        pm_curr = zeros(3, 1);
         phase_counter = int32(0);
         phase_accumulator = 0.0;  % Accumulates fractional part
         first_boundary = true;
@@ -53,11 +61,18 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
     %% Extract parameters from Bus
     % Select pos_m source: 0=static (from params), 1=dynamic (from external)
     if params.pos_m_source > 0.5
-        pos_m = pos_m_ext;
+        pos_m_raw = pos_m_ext;
     else
-        pos_m = params.pos_m;
+        pos_m_raw = params.pos_m;
     end
     sample_rate_mode = params.sample_rate_mode;
+
+    % Get pos_m interpolation enable flag (default: 0 = ZOH)
+    if isfield(params, 'pos_m_interp_enable')
+        pos_m_interp_enable = params.pos_m_interp_enable;
+    else
+        pos_m_interp_enable = 0;  % Default: ZOH (backward compatible)
+    end
 
     %% Rate Transition Constants (FPGA-compatible)
     % 100 kHz / 1600 Hz = 62.5 steps per frame
@@ -69,17 +84,21 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
     % Boundary occurs when phase_accumulator crosses integer threshold
     is_boundary = (phase_counter == int32(0));
 
-    %% Update f_d boundary values at 1600 Hz rate
+    %% Update f_d and pos_m boundary values at 1600 Hz rate
     if sample_rate_mode ~= 3 && is_boundary
         if first_boundary
             % First boundary: eliminate startup transient
-            % Set both prev and curr to current f_d to avoid zero-start ramp
+            % Set both prev and curr to current values to avoid zero-start ramp
             fd_prev = f_d;
             fd_curr = f_d;
+            pm_prev = pos_m_raw;
+            pm_curr = pos_m_raw;
             first_boundary = false;
         else
             fd_prev = fd_curr;
             fd_curr = f_d;
+            pm_prev = pm_curr;
+            pm_curr = pos_m_raw;
         end
     end
 
@@ -102,7 +121,20 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
         f_d_interp = f_d;
     end
 
-    %% Compute v_d using interpolated f_d (every step!)
+    %% Interpolate pos_m based on pos_m_interp_enable
+    if pos_m_interp_enable > 0.5 && sample_rate_mode ~= 3
+        % Linear interpolation for pos_m
+        t_frac = double(phase_counter) / FRAME_PERIOD;
+        if t_frac > 1.0
+            t_frac = 1.0;
+        end
+        pos_m = pm_prev + t_frac * (pm_curr - pm_prev);
+    else
+        % ZOH mode (default): use raw pos_m directly
+        pos_m = pos_m_raw;
+    end
+
+    %% Compute v_d using interpolated f_d and pos_m (every step!)
     v_d = inverse_model_core(f_d_interp, pos_m, params);
 
     %% Increment phase counter with fractional accumulator (FPGA-compatible)
