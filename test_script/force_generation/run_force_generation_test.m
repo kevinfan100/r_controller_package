@@ -66,7 +66,7 @@ step_time = 0.1;                % Step transition time [s]
 % ─────────────────────────────────────────────────────────────────────────
 % 1.4 Bead Position (Measuring Coordinate)
 % ─────────────────────────────────────────────────────────────────────────
-bead_position = [30; 20; 10];      % Bead position [x; y; z] in um
+bead_position = [0; 0; 0];      % Bead position [x; y; z] in um
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.5 Simulation Time
@@ -109,7 +109,7 @@ Ki_value = Kp_value * zc;       % Integral gain (Ki = Kp * zc = 4412)
 % ─────────────────────────────────────────────────────────────────────────
 % 1.8 Simulink Integration
 % ─────────────────────────────────────────────────────────────────────────
-USE_SIMULINK = true;            % true: use Simulink R-Controller
+USE_SIMULINK = false;            % true: use Simulink R-Controller
                                  % false: assume perfect tracking (vm = vd)
 
 % ─────────────────────────────────────────────────────────────────────────
