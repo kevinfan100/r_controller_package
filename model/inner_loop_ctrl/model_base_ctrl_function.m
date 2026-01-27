@@ -47,12 +47,18 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
         uc_w1_k2 = zeros(6, 1);
     end
 
-    %% Feedforward Filter (temp zero phase)
-    % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-λc*b)*vd[k-1] - λc*vd[k-2]}
-    vf_k = params.lambda_f * vf_k1 + params.kff * (params.b * vd + (1 - params.lambda_c * params.b) * vd_k1 - params.lambda_c * vd_k2);
+    %% Feedforward Filter
+    % ========================================================================
+    % [TEMP TEST] 關閉前饋濾波器 (Hf = 1)
+    % 原始: vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-λc*b)*vd[k-1] - λc*vd[k-2]}
+    % 測試: vf[k] = vd[k] (直接透傳，無前饋補償)
+    % ========================================================================
+    vf_k = vd;  % [TEMP] 無前饋: Hf = 1
 
-    % δvf[k] = vf[k] - (λc+kc)·vf[k-1] - bc·vf[k-2] (temp zero phase)
-    delta_vf = vf_k - (params.lambda_c + params.kc) * vf_k1 - params.bc * vf_k2;
+    % δvf[k] 維持原始結構，但用 vd 替代 vf
+    % 這樣可以保持 estimator 的內部模型一致性
+    % 原始: δvf[k] = vf[k] - (λc+kc)·vf[k-1] - bc·vf[k-2]
+    delta_vf = vd - (params.lambda_c + params.kc) * vd_k1 - params.bc * vd_k2;  % [TEMP] 無前饋版本
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;
