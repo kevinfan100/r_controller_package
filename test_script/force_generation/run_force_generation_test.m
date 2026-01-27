@@ -57,7 +57,7 @@ force_amplitude = 5.0;          % Force amplitude [pN]
 force_offset    = 0;
 
 % Sine mode parameters
-force_frequency = 50;           % Force frequency [Hz]
+force_frequency = 100;           % Force frequency [Hz]
 force_phase = 0;                % Phase [deg]
 
 % Step mode parameters

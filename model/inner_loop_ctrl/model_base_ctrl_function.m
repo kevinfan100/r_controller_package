@@ -48,14 +48,13 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     end
 
     %% Feedforward Filter
-    % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
-    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 1
-    vf_k = params.lambda_f * vf_k1 + params.kff * (params.b * vd + ...
-           params.one_S_b_M_lambda_c * vd_k1 - params.lambda_c * vd_k2);
+    % [TEST MODE] Bypass feedforward filter (Hf = 1)
+    % Original: vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
+    vf_k = vd;  % Direct passthrough for testing
 
-    % δvf[k] = vf[k] - (λc + kc)*vf[k-1] - bc*vf[k-2]
-    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 2
-    delta_vf = vf_k - params.lambda_c_A_kc * vf_k1 - params.bc * vf_k2;
+    % δvf[k] = vd[k] - (λc+kc)*vd[k-1] - bc*vd[k-2]
+    % [TEST MODE] Using vd instead of vf for structural consistency
+    delta_vf = vd - params.lambda_c_A_kc * vd_k1 - params.bc * vd_k2;
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;
