@@ -55,9 +55,15 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     params.ku = ku;
 
     %% Feedforward Filter Coefficients
-    % vf[k] = λf*vf[k-1] + kff{ vd[k] - λcvd[k-1]}
-    params.kff = (1 - lambda_f) / ((1-lambda_c)); % Zero Phase Feedforward
-    params.one_S_bc = 1 - bc; % 1 - bc
+    % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
+    % Reference: Inner_ctrl_low.pdf Page 3 (yellow highlight)
+    params.kff = (1 - lambda_f) / ((1 + params.b) * (1 - lambda_c));
+    params.one_S_b_M_lambda_c = 1 - params.b * lambda_c;  % (1 - b·λc) for feedforward
+
+    %% Common Coefficients
+    % (λc + kc) used in δvf and uc equations
+    % Reference: Inner_ctrl_low.pdf Page 4
+    params.lambda_c_A_kc = lambda_c + kc;  % (λc + kc)
 
     %% Estimator Gains
     % delta_v_hat[k] = lambda_c * delta_v_hat[k-1] + delta_vf[k] + L1 * error
@@ -146,28 +152,32 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     elems(14).DataType = 'double';
 
     elems(15) = Simulink.BusElement;
-    elems(15).Name = 'one_S_bc';
+    elems(15).Name = 'one_S_b_M_lambda_c';
     elems(15).DataType = 'double';
 
     elems(16) = Simulink.BusElement;
-    elems(16).Name = 'L1';
+    elems(16).Name = 'lambda_c_A_kc';
     elems(16).DataType = 'double';
 
     elems(17) = Simulink.BusElement;
-    elems(17).Name = 'L2';
+    elems(17).Name = 'L1';
     elems(17).DataType = 'double';
 
     elems(18) = Simulink.BusElement;
-    elems(18).Name = 'L3';
+    elems(18).Name = 'L2';
     elems(18).DataType = 'double';
 
     elems(19) = Simulink.BusElement;
-    elems(19).Name = 'one_A_beta';
+    elems(19).Name = 'L3';
     elems(19).DataType = 'double';
 
     elems(20) = Simulink.BusElement;
-    elems(20).Name = 'neg_beta';
+    elems(20).Name = 'one_A_beta';
     elems(20).DataType = 'double';
+
+    elems(21) = Simulink.BusElement;
+    elems(21).Name = 'neg_beta';
+    elems(21).DataType = 'double';
 
     % Assign elements to bus
     ModelBaseCtrlParamsBus.Elements = elems;

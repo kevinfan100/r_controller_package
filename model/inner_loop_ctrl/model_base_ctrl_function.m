@@ -48,11 +48,14 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     end
 
     %% Feedforward Filter
-    % vf[k] = λf*vf[k-1] + kff{vd[k] - λc*vd[k-1]}
-    vf_k = params.lambda_f * vf_k1 + params.kff * (vd - params.lambda_c * vd_k1);
+    % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
+    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 1
+    vf_k = params.lambda_f * vf_k1 + params.kff * (params.b * vd + ...
+           params.one_S_b_M_lambda_c * vd_k1 - params.lambda_c * vd_k2);
 
-    % δvf[k] = vf[k] - (1-bc)·vf[k-1] - bc·vf[k-2]
-    delta_vf = vf_k - params.one_S_bc * vf_k1 - params.bc * vf_k2;
+    % δvf[k] = vf[k] - (λc + kc)*vf[k-1] - bc*vf[k-2]
+    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 2
+    delta_vf = vf_k - params.lambda_c_A_kc * vf_k1 - params.bc * vf_k2;
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;
@@ -70,15 +73,17 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     w2_hat = w1_hat_k1 + params.L3 * error_term;
 
     %% Control Law
-    % δvc[k] = δv[k] - ŵ1[k]
+    % δvc[k] = δv̂[k] - ŵ1[k]
+    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 7
     delta_vc = delta_v - w1_hat;
 
-    % uc[k] = (1-bc)·uc[k-1] + bc·uc[k-2] + ku·{δvc[k] - a1·δvc[k-1] - a2·δvc[k-2]}
-    uc = params.one_S_bc * uc_k1 + params.bc * uc_k2 + ...
+    % uc[k] = (λc + kc)·uc[k-1] + bc·uc[k-2] + ku·{δvc[k] - a1·δvc[k-1] - a2·δvc[k-2]}
+    % Reference: Inner_ctrl_low.pdf Page 4 (d=0), Equation 8
+    uc = params.lambda_c_A_kc * uc_k1 + params.bc * uc_k2 + ...
          params.ku * (delta_vc - params.a1 * delta_vc_k1 - params.a2 * delta_vc_k2);
 
-    % uc_w1[k] = (1-bc)·uc_w1[k-1] + bc·uc_w1[k-2] + ku·{ŵ1[k] - a1·ŵ1[k-1] - a2·ŵ1[k-2]}
-    uc_w1 = params.one_S_bc * uc_w1_k1 + params.bc * uc_w1_k2 + ...
+    % uc_w1[k] = (λc + kc)·uc_w1[k-1] + bc·uc_w1[k-2] + ku·{ŵ1[k] - a1·ŵ1[k-1] - a2·ŵ1[k-2]}
+    uc_w1 = params.lambda_c_A_kc * uc_w1_k1 + params.bc * uc_w1_k2 + ...
          params.ku * (w1_hat - params.a1 * w1_hat_k1 - params.a2 * w1_hat_k2);
 
     % u[k] = B^-1 · uc[k]

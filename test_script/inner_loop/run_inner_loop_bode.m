@@ -32,7 +32,7 @@ frequencies = config.inner_loop_frequencies;
 
 % Signal parameters
 d = 0;
-channel = 2;
+channel = 5;
 amplitude = 2;
 
 % Controller selection: 1 = R-Controller, 2 = PI Controller

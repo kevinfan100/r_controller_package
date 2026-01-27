@@ -109,7 +109,7 @@ Ki_value = Kp_value * zc;       % Integral gain (Ki = Kp * zc = 4412)
 % ─────────────────────────────────────────────────────────────────────────
 % 1.8 Simulink Integration
 % ─────────────────────────────────────────────────────────────────────────
-USE_SIMULINK = false;            % true: use Simulink R-Controller
+USE_SIMULINK = true;            % true: use Simulink R-Controller
                                  % false: assume perfect tracking (vm = vd)
 
 % ─────────────────────────────────────────────────────────────────────────

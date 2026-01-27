@@ -22,16 +22,16 @@ addpath(fullfile(package_root, 'test_script', 'utils'));
 %% Configuration
 
 test_name = 'test';
-signal_type_name = 'step';          % 'step' or 'sine'
+signal_type_name = 'sine';          % 'step' or 'sine'
 
 % Controller type: 'model_base_ctrl' or 'pi_ctrl'
 controller_type = 'model_base_ctrl';
 
 % Signal parameters
 d = 0;                              % Preview steps
-channel = 3;                        % Excitation channel (1-6)
-amplitude = 2;                      % Amplitude [V]
-frequency = 500;                    % Sine frequency [Hz]
+channel = 2;                        % Excitation channel (1-6)
+amplitude = 1;                      % Amplitude [V]
+frequency = 4000;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
@@ -44,8 +44,8 @@ styles = plot_styles();
 
 % R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
 fB_f = 3000;
-fB_c = 1000;
-fB_e = 5000;
+fB_c = 2000;
+fB_e = 10000;
 
 % PI controller parameters (used when controller_type = 'pi_ctrl')
 Kp_value = config.Kp_default;
