@@ -70,7 +70,7 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     w2_hat = w1_hat_k1 + params.L3 * error_term;
 
     %% Control Law
-    % δvc[k] = δv[k] - ŵ1[k]
+    % δvc[k] = δv[k] - ŵ1[k]  (使用直接測量值，非估測值)
     delta_vc = delta_v - w1_hat;
 
     % uc[k] = (1-bc)·uc[k-1] + bc·uc[k-2] + ku·{δvc[k] - a1·δvc[k-1] - a2·δvc[k-2]}
