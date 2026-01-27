@@ -20,7 +20,7 @@ signal_type_name = 'sine';      % 'step' 或 'sine'
 d = 0;  
 Channel = 2;                    % 激發通道 (1-6)
 Amplitude = 1;               % 振幅 [V]
-Frequency = 1000;                % Sine 頻率 [Hz]
+Frequency = 2000;                % Sine 頻率 [Hz]
 Phase = 0;                      % Sine 相位 [deg]
 StepTime = 0;                 % Step 跳變時間 [s]
                              

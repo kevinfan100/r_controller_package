@@ -32,14 +32,14 @@ frequencies = [10, 50, 100, ...
                125, 200, 250, 400, 500, ...
                625, 800, 1000, 1250, 2000, 2500, 3200, 4000];                 
 
-d_values = [0];
+d_values = [0, 2];
 
 % FFT 分析 preview 設定 (僅 ZPETC 使用)
 % 只做 preview=0 的 FFT 分析，preview=2 的相位用公式計算
 % 公式：phase(preview=2) = phase(preview=0) + 2*theta，其中 theta = 2*pi*f*Ts
 % 這樣可以減少計算量，同時保持理論精確度
 % 注意：PI 控制器會自動忽略此設定，只輸出基本 Bode Plot
-fft_preview_values_config = [0, 2];  % 顯示用（實際只計算 preview=0，preview=2 用公式）
+fft_preview_values_config = [0];  % 顯示用（實際只計算 preview=0，preview=2 用公式）
 use_formula_for_preview = true;  % true: 用公式計算 preview>0 的相位
 
 % Vd Generator 設定
@@ -243,6 +243,9 @@ for d_idx = 1:num_d
         set_param(model_name, 'StopTime', num2str(sim_time));
         set_param(model_name, 'Solver', solver);
         set_param(model_name, 'FixedStep', num2str(Ts));
+
+        % 設定 Preview (d) 參數 - 這會影響 Vd_Generator 的相位
+        set_param([model_name '/Vd/Preview_d'], 'Value', num2str(d));
 
         % 執行模擬
         fprintf('  ⏳ 執行模擬中（d=%d）...\n', d);
@@ -465,15 +468,20 @@ for d_idx = 1:num_d
 
         %% ========== 品質檢測結束 ==========
 
-        % FFT 分析（只做 preview=0，其他 preview 用公式計算）
+        % FFT 分析
+        % 重要：比較 Vm vs 真實參考 r(t) = sin(2πft)，而非 Vm vs Vd_Generator
+        % 這樣才能正確顯示零相位追蹤的效果：
+        %   - d=0: Vm 落後 r(t) 約 2θ（有追蹤誤差）
+        %   - d=2: Vm 與 r(t) 同相（零相位追蹤）
         fprintf('  📊 執行 FFT 分析...\n');
 
         fs = 1 / Ts;
 
-        % ========== 只對 preview=0 進行 FFT 分析 ==========
-        Vd_for_fft = Vd_steady;
+        % ========== 生成真實參考信號 r(t) = sin(2πft) ==========
+        % 這是不含 preview 的參考，代表真實世界的期望追蹤目標
+        Ref_for_fft = Amplitude * sin(2*pi*Frequency*t_steady);
         Vm_for_fft = Vm_steady;
-        N_fft = size(Vd_for_fft, 1);
+        N_fft = length(Ref_for_fft);
 
         freq_axis = (0:N_fft-1) * fs / N_fft;
 
@@ -494,20 +502,20 @@ for d_idx = 1:num_d
                     freq_error_percent, freq_error_threshold);
         end
 
-        % 對激勵通道的 Vd 做 FFT
-        Vd_fft = fft(Vd_for_fft(:, Channel));
-        Vd_mag = abs(Vd_fft(freq_bin_idx)) * 2 / N_fft;
-        Vd_phase = angle(Vd_fft(freq_bin_idx)) * 180 / pi;
+        % 對真實參考 r(t) 做 FFT
+        Ref_fft = fft(Ref_for_fft);
+        Ref_mag = abs(Ref_fft(freq_bin_idx)) * 2 / N_fft;
+        Ref_phase = angle(Ref_fft(freq_bin_idx)) * 180 / pi;
 
-        % 對所有 Vm 通道做 FFT（只計算 preview=0）
+        % 對所有 Vm 通道做 FFT，比較 Vm vs r(t)
         for ch = 1:6
             Vm_fft = fft(Vm_for_fft(:, ch));
             Vm_mag = abs(Vm_fft(freq_bin_idx)) * 2 / N_fft;
             Vm_phase = angle(Vm_fft(freq_bin_idx)) * 180 / pi;
 
-            % 計算頻率響應 (preview=0)
-            magnitude_ratio_all(freq_idx, ch, 1) = Vm_mag / Vd_mag;
-            phase_lag_all(freq_idx, ch, 1) = Vm_phase - Vd_phase;
+            % 計算頻率響應：Vm vs 真實參考 r(t)
+            magnitude_ratio_all(freq_idx, ch, 1) = Vm_mag / Ref_mag;
+            phase_lag_all(freq_idx, ch, 1) = Vm_phase - Ref_phase;
 
             % 相位正規化到 [-180, 180]
             while phase_lag_all(freq_idx, ch, 1) > 180
@@ -548,12 +556,11 @@ for d_idx = 1:num_d
 
         % 顯示結果（使用第一個 fft_preview 值的結果）
         fprintf('  ✓ FFT 完成 (頻率 bin: %.2f Hz)\n', actual_freq);
-        for preview_idx = 1:num_fft_previews
-            fprintf('    preview=%d: P%d 增益=%.2f%%, 相位=%.2f°\n', ...
-                    fft_preview_values(preview_idx), Channel, ...
-                    magnitude_ratio_all(freq_idx, Channel, preview_idx)*100, ...
-                    phase_lag_all(freq_idx, Channel, preview_idx));
-        end
+        % 顯示結果：Vm vs r(t) 的追蹤誤差
+        fprintf('    Vm vs r(t): P%d 增益=%.2f%%, 相位=%.2f°\n', ...
+                Channel, ...
+                magnitude_ratio_all(freq_idx, Channel, 1)*100, ...
+                phase_lag_all(freq_idx, Channel, 1));
         fprintf('\n');
     end
 
@@ -569,26 +576,35 @@ for d_idx = 1:num_d
     freq_theory = logspace(0, log10(5000), 500);  % 1 Hz ~ 5000 Hz，500 點
 
     % 計算理論振幅和相位
-    % A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
-    % φ(θ; d=0, preview=0) = -2θ（無 preview 補償，相位落後 2 個 sample）
-    % 主 Bode Plot 顯示的是 preview=0 的數據，所以理論相位應為 -2θ
+    % 比較基準：Vm vs 真實參考 r(t) = sin(2πft)
+    %
+    % 振幅：A(θ; 0, b) = kf * sqrt(1 + 2b·cos θ + b²)
+    %
+    % 相位：φ(θ; d) = -(2-d)·θ
+    %   - d=0: φ = -2θ（系統有 2-sample 延遲，無 preview 補償）
+    %   - d=2: φ = 0（preview 補償延遲，達成零相位追蹤）
     A_theory = zeros(size(freq_theory));
     phi_theory_deg = zeros(size(freq_theory));
 
     for i = 1:length(freq_theory)
         theta = 2*pi*freq_theory(i)*Ts;
         A_theory(i) = kf * sqrt(1 + 2*b_value*cos(theta) + b_value^2);
-        phi_theory_deg(i) = -2*theta*(180/pi);  % -2θ（度）
+        phi_theory_deg(i) = -(2-d)*theta*(180/pi);  % -(2-d)·θ（度）
     end
 
     % ========== 計算 Theory (No FF) - 無前饋濾波器的閉迴路響應 ==========
-    % 閉迴路轉移函數（無前饋，d=0）:
+    % 比較基準：Vm vs 真實參考 r(t) = sin(2πft)
+    %
+    % 閉迴路轉移函數（無前饋，Hf=1）:
     % Hcl(z^-1) = z^-(1+d) * kc * (1 + b*z^-1) / (1 - λc*z^-1)
-    % 當 d=0 時: Hcl(z^-1) = z^-1 * kc * (1 + b*z^-1) / (1 - λc*z^-1)
+    %
+    % 當比較 Vm vs r(t) 時，需考慮 d 的效果：
+    % - 使用 z^-(1+d) 表示系統延遲 + preview 補償
+    % - d=0: z^-1 (1-sample delay in closed loop)
+    % - d=2: z^1 (effective advance due to preview)
+    %
     % kc = (1 - λc) / (1 + b)
-    % DC Gain: Hcl(z^-1=1) = kc * (1+b) / (1-λc) = 1
 
-    % 計算 kc = (1 - λc) / (1 + b)
     kc = (1 - lambda_c) / (1 + b_value);
 
     A_theory_noFF = zeros(size(freq_theory));
@@ -598,9 +614,11 @@ for d_idx = 1:num_d
         theta = 2*pi*freq_theory(i)*Ts;  % θ = ωT
         z_inv = exp(-1j*theta);  % z^{-1} = e^{-jθ}
 
-        % Hcl = z^-1 * kc * (1 + b*z^-1) / (1 - λc*z^-1)
-        Hcl_num = z_inv * kc * (1 + b_value * z_inv);  % 分子：z^-1 * kc * (1+b*z^-1)
-        Hcl_den = 1 - lambda_c * z_inv;                 % 分母：(1-λc*z^-1)
+        % Hcl = z^-(1-d) * kc * (1 + b*z^-1) / (1 - λc*z^-1)
+        % 注意：這裡考慮 d 對相位的影響
+        z_delay = exp(-1j*(1-d)*theta);  % z^-(1-d)
+        Hcl_num = z_delay * kc * (1 + b_value * z_inv);
+        Hcl_den = 1 - lambda_c * z_inv;
         Hcl = Hcl_num / Hcl_den;
 
         A_theory_noFF(i) = abs(Hcl);
@@ -677,7 +695,7 @@ channel_colors = [
 % 定義每個通道的標記形狀
 markers = {'o', 's', '^', 'd', 'v', 'p'};  % P1-P6: 圓形、方形、上三角、菱形、下三角、五角星
 
-% === 圖 1 & 2: 各 d 值的所有通道響應（使用第一個 fft_delay）===
+% === 圖 1 & 2: 各 d 值的所有通道響應（使用第一個 fft_preview）===
 for d_idx = 1:num_d
     d = results(d_idx).d_value;
 
