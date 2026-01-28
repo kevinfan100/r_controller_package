@@ -20,6 +20,7 @@ function motion_control_law_params = motion_control_law_params(varargin)
 %   'NoiseFilterCutoff' - Filter cutoff frequency [Hz] (default: 5)
 %   'DelayCompEnable'   - Enable d=2 delay compensation (default: 0)
 %   'DelaySteps'        - Delay steps d for compensation (default: 2)
+%   'TrajPreviewEnable' - Enable trajectory preview p_d[k+1] (default: 0)
 %
 % Output:
 %   motion_control_law_params - Simulink.Parameter with MotionControlLawParamsBus
@@ -28,8 +29,12 @@ function motion_control_law_params = motion_control_law_params(varargin)
 %   This function follows the project naming convention:
 %   function name = variable name = Bus base name
 %
-% Control Law (d=0, no delay compensation):
+% Control Law (d=0, no delay compensation, no preview):
 %   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
+%
+% Control Law (d=0, with trajectory preview - Paper Eq.17 feedforward):
+%   f_d[k] = (gamma/Ts) * {p_d[k+1] - lambda_c*p_d[k] - (1-lambda_c)*p_feedback[k]}
+%   Note: p_d[k+1] is known since trajectory is given analytically
 %
 % Control Law (d=2, with delay compensation - Paper Eq.17):
 %   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
@@ -63,6 +68,7 @@ function motion_control_law_params = motion_control_law_params(varargin)
     addParameter(p, 'NoiseFilterCutoff', 5, @(x) x > 0);
     addParameter(p, 'DelayCompEnable', 0, @(x) ismember(x, [0, 1]));
     addParameter(p, 'DelaySteps', 2, @(x) x >= 0 && x == floor(x));
+    addParameter(p, 'TrajPreviewEnable', 0, @(x) ismember(x, [0, 1]));
     parse(p, varargin{:});
 
     %% Build Parameter Structure
@@ -83,13 +89,16 @@ function motion_control_law_params = motion_control_law_params(varargin)
     params.delay_comp_enable = double(p.Results.DelayCompEnable);
     params.delay_steps = double(p.Results.DelaySteps);
 
+    % Trajectory preview parameter
+    params.traj_preview_enable = double(p.Results.TrajPreviewEnable);
+
     %% Create Bus Object (MotionControlLawParamsBus)
     MotionControlLawParamsBus = Simulink.Bus;
     MotionControlLawParamsBus.Description = 'Motion Control Law Parameters';
 
     elem_names = {'enable', 'lambda_c', 'gamma', 'Ts', ...
                   'noise_filter_enable', 'noise_filter_cutoff', 'filter_alpha', ...
-                  'delay_comp_enable', 'delay_steps'};
+                  'delay_comp_enable', 'delay_steps', 'traj_preview_enable'};
 
     elems = Simulink.BusElement.empty(0, length(elem_names));
     for i = 1:length(elem_names)

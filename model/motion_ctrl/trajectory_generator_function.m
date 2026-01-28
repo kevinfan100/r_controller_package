@@ -1,8 +1,9 @@
-function p_d = trajectory_generator_function(t, p0, traj_params, particle_params)
+function [p_d, p_d_next] = trajectory_generator_function(t, p0, traj_params, particle_params)
 % TRAJECTORY_GENERATOR_FUNCTION Generate desired trajectory position
 %
 % Calculates the desired trajectory position based on current time,
-% starting position, and trajectory parameters.
+% starting position, and trajectory parameters. Also computes p_d_next
+% for trajectory preview control.
 %
 % Inputs:
 %   t               - Current time [s]
@@ -10,8 +11,9 @@ function p_d = trajectory_generator_function(t, p0, traj_params, particle_params
 %   traj_params     - TrajectoryGeneratorParamsBus
 %   particle_params - ParticleDynamicsParamsBus (provides w_hat for z_sine)
 %
-% Output:
-%   p_d    - Desired position (3x1) [um], Measuring coordinate
+% Outputs:
+%   p_d      - Desired position at t (3x1) [um], Measuring coordinate
+%   p_d_next - Desired position at t+Ts (3x1) [um], for preview control
 %
 % Trajectory types:
 %   type=0 (z_sine):
@@ -46,12 +48,26 @@ function p_d = trajectory_generator_function(t, p0, traj_params, particle_params
 
 %#codegen
 
+    % Motion control sampling period
+    Ts_motion = 1/1600;
+
+    % Calculate p_d at current time t
     if traj_params.type < 0.5  % z_sine
         p_d = trajectory_z_sine(t, p0, traj_params, particle_params);
     elseif traj_params.type < 1.5  % xy_circle
         p_d = trajectory_xy_circle(t, p0, traj_params);
     else  % positioning
         p_d = trajectory_positioning(t, p0, traj_params);
+    end
+
+    % Calculate p_d_next at time t + Ts_motion (for trajectory preview)
+    t_next = t + Ts_motion;
+    if traj_params.type < 0.5  % z_sine
+        p_d_next = trajectory_z_sine(t_next, p0, traj_params, particle_params);
+    elseif traj_params.type < 1.5  % xy_circle
+        p_d_next = trajectory_xy_circle(t_next, p0, traj_params);
+    else  % positioning
+        p_d_next = trajectory_positioning(t_next, p0, traj_params);
     end
 
 end

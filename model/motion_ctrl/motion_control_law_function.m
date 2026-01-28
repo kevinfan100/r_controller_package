@@ -1,10 +1,14 @@
-function f_d = motion_control_law_function(p_d, p_m, params)
+function f_d = motion_control_law_function(p_d, p_d_next, p_m, params)
 % MOTION_CONTROL_LAW_FUNCTION Position-dependent discrete-time motion control
 %
 % Implements closed-loop position control for overdamped particle dynamics.
 %
-% Control Law (d=0, no delay compensation):
+% Control Law (d=0, no delay compensation, no preview):
 %   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
+%
+% Control Law (d=0, with trajectory preview - traj_preview_enable=1):
+%   f_d[k] = (gamma/Ts) * {p_d[k+1] - lambda_c*p_d[k] - (1-lambda_c)*p_feedback[k]}
+%   Note: p_d[k+1] is known since trajectory is given analytically
 %
 % Control Law (d=2, with delay compensation - Paper Eq.17):
 %   f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
@@ -16,9 +20,10 @@ function f_d = motion_control_law_function(p_d, p_m, params)
 %   p_feedback = p_m (raw measured position)
 %
 % Inputs:
-%   p_d    - Desired position (3x1) [um], Measuring coordinate
-%   p_m    - Measured position (3x1) [um], Measuring coordinate
-%   params - MotionControlLawParamsBus
+%   p_d      - Desired position at t (3x1) [um], Measuring coordinate
+%   p_d_next - Desired position at t+Ts (3x1) [um], for preview control
+%   p_m      - Measured position (3x1) [um], Measuring coordinate
+%   params   - MotionControlLawParamsBus
 %
 % Output:
 %   f_d    - Desired force (3x1) [pN], Measuring coordinate
@@ -33,7 +38,10 @@ function f_d = motion_control_law_function(p_d, p_m, params)
 %   Solving for f_d[k]:
 %     f_d[k] = (gamma/Ts) * {p_d[k+1] - lambda_c*p_d[k] - (1-lambda_c)*p[k]}
 %
-%   Using p_d[k] to approximate p_d[k+1] (zero-order hold):
+%   When trajectory is known analytically, we can use actual p_d[k+1]:
+%     f_d[k] = (gamma/Ts) * {p_d[k+1] - lambda_c*p_d[k] - (1-lambda_c)*p_feedback[k]}
+%
+%   Otherwise, using p_d[k] to approximate p_d[k+1] (zero-order hold):
 %     f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
 %
 % Note:
@@ -41,8 +49,8 @@ function f_d = motion_control_law_function(p_d, p_m, params)
 %   - Filter state updates even when disabled for smooth switching
 %
 % Example:
-%   params = motion_control_law_params('LambdaC', 0.7);
-%   f_d = motion_control_law_function([0;0;5], [0;0;4.9], params.Value);
+%   params = motion_control_law_params('LambdaC', 0.7, 'TrajPreviewEnable', 1);
+%   f_d = motion_control_law_function([0;0;5], [0;0;5.01], [0;0;4.9], params.Value);
 %
 % See also: motion_control_law_params, trajectory_generator_function, CLAUDE.md
 
@@ -95,21 +103,32 @@ function f_d = motion_control_law_function(p_d, p_m, params)
     % =========================================================================
     % Control Law Selection
     % =========================================================================
-    if params.delay_comp_enable > 0.5
-        % ---------------------------------------------------------------------
-        % Delay Compensation Control Law (d=2) - Paper Eq.17
-        % ---------------------------------------------------------------------
-        % f_d[k] = (gamma/Ts) * {p_d[k] - lambda_c*p_d[k-1] - (1-lambda_c)*p_feedback[k]}
-        %          - (1-lambda_c) * {f_d[k-1] + f_d[k-2]}
-        %
-        % Note: p_d[k+1] approximated by p_d[k] (ZOH assumption)
 
-        f_d = (gamma / Ts) * (p_d - lambda_c * p_d_prev - one_minus_lambda * p_feedback) - one_minus_lambda * (f_d_prev1 + f_d_prev2);
+    % ---------------------------------------------------------------------
+    % Trajectory Term: Select between preview and ZOH approximation
+    % ---------------------------------------------------------------------
+    if params.traj_preview_enable > 0.5
+        % Trajectory Preview: Use p_d[k+1] (known analytically)
+        % delta_p_d = p_d[k+1] - lambda_c * p_d[k]
+        delta_p_d = p_d_next - lambda_c * p_d;
     else
-        % ---------------------------------------------------------------------
-        % Original Control Law (d=0) - No delay compensation
-        % ---------------------------------------------------------------------
-        f_d = (gamma / Ts) * (p_d - lambda_c * p_d_prev - one_minus_lambda * p_feedback);
+        % ZOH Approximation: Approximate p_d[k+1] with p_d[k]
+        % delta_p_d = p_d[k] - lambda_c * p_d[k-1]
+        delta_p_d = p_d - lambda_c * p_d_prev;
+    end
+
+    % ---------------------------------------------------------------------
+    % Control Law with optional delay compensation
+    % ---------------------------------------------------------------------
+    if params.delay_comp_enable > 0.5
+        % Delay Compensation Control Law (d=2) - Paper Eq.17
+        % f_d[k] = (gamma/Ts) * {delta_p_d - (1-lambda_c)*p_feedback[k]}
+        %          - (1-lambda_c) * {f_d[k-1] + f_d[k-2]}
+        f_d = (gamma / Ts) * (delta_p_d - one_minus_lambda * p_feedback) ...
+              - one_minus_lambda * (f_d_prev1 + f_d_prev2);
+    else
+        % Standard Control Law (d=0) - No delay compensation
+        f_d = (gamma / Ts) * (delta_p_d - one_minus_lambda * p_feedback);
     end
 
     % =========================================================================

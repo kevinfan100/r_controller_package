@@ -39,7 +39,20 @@ h_min = 1.1 * 2.25;                  % Minimum safe distance [um]
 % === Motion Control Parameters ===
 ctrl_enable = true;             % true=closed-loop, false=open-loop
 lambda_c = 0.7;                 % Closed-loop pole (0 < lambda < 1)
-delay_comp_enable = false;       % d=2
+
+% -------------------------------------------------------------------------
+% Motion Control Compensation Settings
+% -------------------------------------------------------------------------
+% delay_comp_enable: d=2 delay compensation (for measurement delay)
+%   true  = Enable -(1-λc)[f_d[k-1] + f_d[k-2]] term
+%   false = No delay compensation
+delay_comp_enable = false;
+
+% traj_preview_enable: Trajectory preview using p_d[k+1] (Paper Eq.17)
+%   true  = Use p_d[k+1] for feedforward (known trajectory)
+%   false = Use p_d[k] approximation (original)
+traj_preview_enable = true;
+
 noise_filter_enable = false;    % Feedback low-pass filter
 noise_filter_cutoff = 3;       % Filter cutoff frequency [Hz]
 
@@ -56,9 +69,20 @@ end
 thermal_enable = true;          % Thermal force (Brownian motion)
 wall_effect_enable = true;      % Wall effect
 
-% === Sample Rate and Interpolation ===
-% 1=ZOH, 2=Linear (default), 3=Direct
+% -------------------------------------------------------------------------
+% Sample Rate and Interpolation
+% -------------------------------------------------------------------------
+% sample_rate_mode: f_d interpolation method (1600 Hz → 100 kHz)
+%   1 = ZOH (zero-order hold)
+%   2 = Linear interpolation (default)
+%   3 = Direct (100 kHz, no interpolation)
 sample_rate_mode = 2;
+
+% pos_m_interp_enable: Position interpolation method
+%   0 = ZOH (zero-order hold, default)
+%   1 = Linear interpolation
+pos_m_interp_enable = 0;
+
 pos_update_rate = 1600;         % Position update rate [Hz]
 
 % === Inner Loop Controller ===
@@ -125,9 +149,14 @@ T_sim = T_traj + T_margin;
 fprintf('  Trajectory time: %.2f s, Total sim time: %.2f s\n', T_traj, T_sim);
 fprintf('  Control: %s (lambda_c=%.2f)\n', ...
     conditional_str(ctrl_enable, 'Closed-loop', 'Open-loop'), lambda_c);
+fprintf('  Trajectory preview: %s, Delay compensation: %s\n', ...
+    conditional_str(traj_preview_enable, 'ON', 'OFF'), ...
+    conditional_str(delay_comp_enable, 'ON', 'OFF'));
 fprintf('  Thermal: %s, Wall effect: %s\n', ...
     conditional_str(thermal_enable, 'ON', 'OFF'), ...
     conditional_str(wall_effect_enable, 'ON', 'OFF'));
+fprintf('  Sample rate mode: %d, pos_m interp: %s\n', ...
+    sample_rate_mode, conditional_str(pos_m_interp_enable, 'Linear', 'ZOH'));
 fprintf('  Inner loop: %s\n\n', controller_type);
 
 %% SECTION 4: Create Parameter Structures
@@ -161,7 +190,8 @@ fprintf('  particle_dynamics_params created\n');
 motion_params = motion_control_law_params( ...
     'LambdaC', lambda_c, ...
     'Enable', ctrl_enable, ...
-    'DelayCompEnable', delay_comp_enable);
+    'DelayCompEnable', delay_comp_enable, ...
+    'TrajPreviewEnable', traj_preview_enable);
 fprintf('  motion_control_law_params created\n');
 
 % Thermal force parameters
@@ -185,7 +215,8 @@ end
 alloc_params = force_model_allocation_params( ...
     'Simulink', true, ...
     'SampleRateMode', sample_rate_mode, ...
-    'PosMSource', 1);
+    'PosMSource', 1, ...
+    'PosMInterpEnable', pos_m_interp_enable);
 fprintf('  force_model_allocation_params created\n');
 
 % Calculate initial position
@@ -557,6 +588,10 @@ if SAVE_PNG || SAVE_MAT
         result.config.hold_time = hold_time;
         result.config.lambda_c = lambda_c;
         result.config.ctrl_enable = ctrl_enable;
+        result.config.delay_comp_enable = delay_comp_enable;
+        result.config.traj_preview_enable = traj_preview_enable;
+        result.config.sample_rate_mode = sample_rate_mode;
+        result.config.pos_m_interp_enable = pos_m_interp_enable;
         result.config.thermal_enable = thermal_enable;
         result.config.wall_effect_enable = wall_effect_enable;
         result.config.controller_type = controller_type;
