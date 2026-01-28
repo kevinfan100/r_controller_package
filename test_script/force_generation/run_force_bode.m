@@ -2,7 +2,7 @@
 % Force Control Frequency Response Test - Bode Plot Analysis
 %
 % This script measures the frequency response of the force control pipeline:
-%   f_d (desired force) -> Inverse Model -> v_d -> R-Controller -> v_m -> Force Model -> f_m
+%   f_d (desired force) -> Inverse Model -> v_d -> Model Based Control -> v_m -> Force Model -> f_m
 %
 % Features:
 %   1. Sweep through multiple frequency points (1 Hz ~ 2 kHz, 14 points)
@@ -39,9 +39,23 @@ addpath(fullfile(package_root, 'test_script', 'utils'));
 % 1.1 Controller Selection
 % -------------------------------------------------------------------------
 % Select which controller to use:
-%   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
+%   'model_base_ctrl' - Model Based Control (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'model_base_ctrl';   % 'model_base_ctrl' or 'pi_controller'
+
+% -------------------------------------------------------------------------
+% 1.1.1 Model Based Control Feedforward Settings (only when controller_type = 'model_base_ctrl')
+% -------------------------------------------------------------------------
+% ff_enable: Enable/disable feedforward filter
+%   true  - Feedforward enabled (ZPETC tracking)
+%   false - Feedforward disabled (closed-loop only)
+%
+% ff_preview: Preview steps for ZPETC (only effective when ff_enable = true)
+%   0 - No preview (ZPETC d=0, phase lag = -2*theta)
+%   2 - 2-step preview (ZPETC d=2, zero phase error)
+%
+ff_enable = true;                       % Enable feedforward filter
+ff_preview = 0;                         % Preview steps: 0 or 2
 
 % -------------------------------------------------------------------------
 % 1.2 Force Direction (single axis)
@@ -96,7 +110,7 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay for linear)
                                 % false = Ideal (non-causal interpolation)
 
 % -------------------------------------------------------------------------
-% 1.7 R-Controller Bandwidth
+% 1.7 Model Based Control Bandwidth
 % -------------------------------------------------------------------------
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
@@ -165,14 +179,21 @@ Ts = 1e-5;                      % Sampling time [s] (100 kHz)
 
 % Validate controller type
 controller_type = lower(controller_type);
-if ~ismember(controller_type, {'r_controller', 'pi_controller'})
-    error('Invalid controller_type: %s. Use ''r_controller'' or ''pi_controller''.', controller_type);
+if ~ismember(controller_type, {'model_base_ctrl', 'pi_controller'})
+    error('Invalid controller_type: %s. Use ''model_base_ctrl'' or ''pi_controller''.', controller_type);
 end
 
-% Set ControllerType for Simulink (1=R-Controller, 2=PI-Controller)
-if strcmpi(controller_type, 'r_controller')
+% Set ControllerType for Simulink (1=Model Based Control, 2=PI-Controller)
+if strcmpi(controller_type, 'model_base_ctrl')
     ControllerType = 1;
-    controller_label = 'R-Controller';
+    % Generate controller label with feedforward mode
+    if ~ff_enable
+        controller_label = 'Model Based Control (No FF)';
+    elseif ff_preview == 0
+        controller_label = 'Model Based Control (ZPETC d=0)';
+    else
+        controller_label = 'Model Based Control (ZPETC d=2)';
+    end
 else
     ControllerType = 2;
     controller_label = 'PI-Controller';
@@ -186,8 +207,8 @@ inv_params = force_model_allocation_params();
 alloc_params_sim = force_model_allocation_params('Simulink', true, ...
     'pos_m', bead_position, 'SampleRateMode', 2);  % Linear interpolation
 
-% Load R-Controller parameters (new API)
-model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f);
+% Load Model Based Control parameters (with ff_enable setting)
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
 
 % Set force direction vector based on axis selection
 switch upper(force_axis)
@@ -215,7 +236,8 @@ fprintf('  Bead position: [%.1f, %.1f, %.1f] um\n', bead_position);
 fprintf('  Frequency range: %.1f Hz ~ %.1f Hz (%d points)\n', ...
         frequencies(1), frequencies(end), length(frequencies));
 if ControllerType == 1
-    fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  Model Based Control: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  Feedforward: ff_enable=%d, ff_preview=%d\n', ff_enable, ff_preview);
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
@@ -273,8 +295,19 @@ end
 
 % Create output directory
 test_timestamp = datestr(now, 'yyyymmdd_HHMMSS');
-ctrl_short = {'r_ctrl', 'pi_ctrl'};
-test_folder_name = sprintf('%s_%s_axis_%s', ctrl_short{ControllerType}, force_axis, test_timestamp);
+% Generate short controller name for folder
+if ControllerType == 1
+    if ~ff_enable
+        ctrl_short_name = 'mbc_noff';
+    elseif ff_preview == 0
+        ctrl_short_name = 'mbc_d0';
+    else
+        ctrl_short_name = 'mbc_d2';
+    end
+else
+    ctrl_short_name = 'pi_ctrl';
+end
+test_folder_name = sprintf('%s_%s_axis_%s', ctrl_short_name, force_axis, test_timestamp);
 test_dir = fullfile(output_dir, test_folder_name);
 if ~exist(test_dir, 'dir')
     mkdir(test_dir);
@@ -372,14 +405,14 @@ for freq_idx = 1:num_freq
 
     % vd_signal_params (required by Signal mode, but not used in Force mode)
     vd_sig_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
-        'Frequency', freq, 'Ts', Ts, 'd', 0);
+        'Frequency', freq, 'Ts', Ts, 'ff_preview', ff_preview);
     assignin('base', 'vd_signal_params', vd_sig_params);
 
     % alloc_params with correct sample_rate_mode for hardware constraint
     alloc_params_sim.Value.sample_rate_mode = sample_rate_mode;
     assignin('base', 'alloc_params', alloc_params_sim);
 
-    % Controller parameters (both R-Controller and PI are needed)
+    % Controller parameters (both Model Based Control and PI are needed)
     assignin('base', 'model_base_ctrl_params', model_base_ctrl_params_local);
 
     % PI Controller parameters
@@ -823,7 +856,7 @@ if ControllerType == 2  % PI mode - include Theory curve
         {axis_labels{1}, axis_labels{2}, axis_labels{3}, 'Theory'}, ...
         'Location', 'northoutside', 'NumColumns', 4, ...
         'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
-else  % R-Controller mode
+else  % Model Based Control mode
     lgd = legend(plot_handles_mag, 'Location', 'northoutside', 'NumColumns', 3, ...
         'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
 end

@@ -46,7 +46,7 @@ function pi_ctrl_params = pi_ctrl_params(Kp, Ki, varargin)
     % i[k] = i[k-1] + (Ki * Ts / 2) * (e[k] + e[k-1])
     params.Ki_Ts_half = Ki * Ts / 2;
 
-    % Coupling matrix B and its inverse (same as R-Controller)
+    % Coupling matrix B and its inverse (same as Model Based Control)
     B = [0.2365  -0.0064  -0.0327  -0.0344  -0.0408  -0.0343;
         -0.0037   0.2818  -0.0427  -0.0675  -0.0779  -0.0368;
         -0.0375  -0.0328   0.2108  -0.0060  -0.0265  -0.0341;

@@ -19,7 +19,7 @@ function vd_signal_params = vd_signal_params(varargin)
 %   'Phase'      - Sine phase [deg] (default: 0)
 %   'StepTime'   - Step transition time [s] (default: 0)
 %   'Ts'         - Sampling time [s] (default: 1e-5)
-%   'd'          - Preview steps (default: 0)
+%   'ff_preview' - Feedforward preview steps: 0 (no preview) or 2 (ZPETC) (default: 0)
 %
 % Output:
 %   vd_signal_params - Simulink.Parameter with VdSignalParamsBus type
@@ -46,7 +46,7 @@ function vd_signal_params = vd_signal_params(varargin)
     addParameter(p, 'Phase', 0, @isnumeric);
     addParameter(p, 'StepTime', 0, @(x) x >= 0);
     addParameter(p, 'Ts', 1e-5, @(x) x > 0);
-    addParameter(p, 'd', 0, @(x) x >= 0);
+    addParameter(p, 'ff_preview', 0, @(x) ismember(x, [0, 2]));
     parse(p, varargin{:});
 
     %% Build Parameter Structure
@@ -57,7 +57,7 @@ function vd_signal_params = vd_signal_params(varargin)
     params.phase = p.Results.Phase;
     params.step_time = p.Results.StepTime;
     params.Ts = p.Results.Ts;
-    params.d = p.Results.d;
+    params.ff_preview = p.Results.ff_preview;
 
     %% Create Bus Object (VdSignalParamsBus)
     VdSignalParamsBus = Simulink.Bus;
@@ -65,7 +65,7 @@ function vd_signal_params = vd_signal_params(varargin)
 
     % Define bus elements in the order they appear in the struct
     elem_names = {'mode', 'channel', 'amplitude', 'frequency', 'phase', ...
-                  'step_time', 'Ts', 'd'};
+                  'step_time', 'Ts', 'ff_preview'};
 
     elems = Simulink.BusElement.empty(0, length(elem_names));
     for i = 1:length(elem_names)

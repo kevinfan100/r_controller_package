@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-R-Controller Package: A MATLAB/Simulink implementation of an R-Controller for magnetic tweezers, controlling 6-pole electromagnetic actuators for precision biological force measurement at piconewton scale.
+Model Based Control Package: A MATLAB/Simulink implementation of a Model Based Controller for magnetic tweezers, controlling 6-pole electromagnetic actuators for precision biological force measurement at piconewton scale.
 
 ## Directory Structure
 
@@ -74,7 +74,7 @@ run('test_script/force_generation/run_force_bode.m')
 ### Signal Flow
 
 ```
-Desired Force (f_d) → Inverse Model → v_d → R-Controller → u (currents) → Plant → v_m → Force Model → f_m
+Desired Force (f_d) → Inverse Model → v_d → Model Based Control → u (currents) → Plant → v_m → Force Model → f_m
 ```
 
 ### Key Files
@@ -277,7 +277,7 @@ complex_operation();
 
 ## Controller Parameters
 
-### R-Controller Bandwidths
+### Model Based Control Bandwidths
 
 - `fB_f` - Feedforward filter bandwidth [Hz]
 - `fB_c` - Control bandwidth [Hz]

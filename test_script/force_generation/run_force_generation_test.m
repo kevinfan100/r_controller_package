@@ -4,7 +4,7 @@
 % This script demonstrates the complete force control pipeline:
 %   1. Set desired force signal f_d
 %   2. Call inverse_model to compute vd timeseries
-%   3. Execute Simulink simulation (R-Controller tracks vd)
+%   3. Execute Simulink simulation (Model Based Control tracks vd)
 %   4. Call force_model to compute estimated force f_m
 %   5. Plot comparison graphs
 %
@@ -42,9 +42,23 @@ test_name = 'force_control_test';
 % 1.2 Controller Selection
 % ─────────────────────────────────────────────────────────────────────────
 % Select which controller to use:
-%   'r_controller' - R-Controller (discrete-time, feedforward + DOB + PI)
+%   'model_base_ctrl' - Model Based Control (discrete-time, feedforward + DOB + PI)
 %   'pi_controller' - PI Controller (classic proportional-integral)
-controller_type = 'r_controller';   % 'r_controller' or 'pi_controller'
+controller_type = 'model_base_ctrl';   % 'model_base_ctrl' or 'pi_controller'
+
+% ─────────────────────────────────────────────────────────────────────────
+% 1.2.1 Model Based Control Feedforward Settings (only when controller_type = 'model_base_ctrl')
+% ─────────────────────────────────────────────────────────────────────────
+% ff_enable: Enable/disable feedforward filter
+%   true  - Feedforward enabled (ZPETC tracking)
+%   false - Feedforward disabled (closed-loop only)
+%
+% ff_preview: Preview steps for ZPETC (only effective when ff_enable = true)
+%   0 - No preview (ZPETC d=0, phase lag = -2*theta)
+%   2 - 2-step preview (ZPETC d=2, zero phase error)
+%
+ff_enable = true;                       % Enable feedforward filter
+ff_preview = 0;                         % Preview steps: 0 or 2
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -93,7 +107,7 @@ interp_method = 'linear';       % Interpolation method: 'linear' or 'previous' (
 USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ideal (non-causal)
 
 % ─────────────────────────────────────────────────────────────────────────
-% 1.6 R-Controller Parameters
+% 1.6 Model Based Control Parameters
 % ─────────────────────────────────────────────────────────────────────────
 fB_f = 1000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
@@ -109,7 +123,7 @@ Ki_value = Kp_value * zc;       % Integral gain (Ki = Kp * zc = 4412)
 % ─────────────────────────────────────────────────────────────────────────
 % 1.8 Simulink Integration
 % ─────────────────────────────────────────────────────────────────────────
-USE_SIMULINK = true;            % true: use Simulink R-Controller
+USE_SIMULINK = true;            % true: use Simulink Model Based Control
                                  % false: assume perfect tracking (vm = vd)
 
 % ─────────────────────────────────────────────────────────────────────────
@@ -141,14 +155,21 @@ fprintf('───────────────────────�
 
 % Validate controller type
 controller_type = lower(controller_type);
-if ~ismember(controller_type, {'r_controller', 'pi_controller'})
-    error('Invalid controller_type: %s. Use ''r_controller'' or ''pi_controller''.', controller_type);
+if ~ismember(controller_type, {'model_base_ctrl', 'pi_controller'})
+    error('Invalid controller_type: %s. Use ''model_base_ctrl'' or ''pi_controller''.', controller_type);
 end
 
-% Set ControllerType for Simulink (1=R-Controller, 2=PI-Controller)
-if strcmpi(controller_type, 'r_controller')
+% Set ControllerType for Simulink (1=Model Based Control, 2=PI-Controller)
+if strcmpi(controller_type, 'model_base_ctrl')
     ControllerType = 1;
-    controller_label = 'R-Controller';
+    % Generate controller label with feedforward mode
+    if ~ff_enable
+        controller_label = 'Model Based Control (No FF)';
+    elseif ff_preview == 0
+        controller_label = 'Model Based Control (ZPETC d=0)';
+    else
+        controller_label = 'Model Based Control (ZPETC d=2)';
+    end
 else
     ControllerType = 2;
     controller_label = 'PI-Controller';
@@ -172,8 +193,8 @@ alloc_params_sim = force_model_allocation_params('Simulink', true, ...
 % For offline analysis (not used by Simulink, but kept for compatibility)
 inv_params = force_model_allocation_params();
 
-% Load R-Controller parameters
-model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f);
+% Load Model Based Control parameters (with ff_enable setting)
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
 
 % System constants
 Ts = 1e-5;                      % Sampling time [s] (100 kHz)
@@ -202,7 +223,8 @@ if strcmpi(generation_mode, 'hardware')
     fprintf('    - Handled by inverse_model_function in Simulink\n');
 end
 if ControllerType == 1
-    fprintf('  R-Controller: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  Model Based Control: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  Feedforward: ff_enable=%d, ff_preview=%d\n', ff_enable, ff_preview);
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
@@ -275,7 +297,7 @@ if USE_SIMULINK
     % vd_signal_params (required by Signal mode, but not used in Force mode)
     % Create a dummy one to avoid Simulink errors
     vd_sig_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
-        'Frequency', 100, 'Ts', Ts, 'd', 0);
+        'Frequency', 100, 'Ts', Ts, 'ff_preview', ff_preview);
     assignin('base', 'vd_signal_params', vd_sig_params);
 
     % ─────────────────────────────────────────────────────────────────────
@@ -283,7 +305,7 @@ if USE_SIMULINK
     % ─────────────────────────────────────────────────────────────────────
     assignin('base', 'ControllerType', ControllerType);
 
-    % R-Controller parameters
+    % Model Based Control parameters
     assignin('base', 'model_base_ctrl_params', model_base_ctrl_params_local);
 
     % PI-Controller parameters
@@ -336,7 +358,7 @@ if USE_SIMULINK
     % ─────────────────────────────────────────────────────────────────────
     % Extract outputs from simulation
     % ─────────────────────────────────────────────────────────────────────
-    % Vm: measured Hall voltage (6x1) from R-Controller output
+    % Vm: measured Hall voltage (6x1) from Model Based Control output
     Vm_ts = simOut.get('Vm');
     if isa(Vm_ts, 'timeseries')
         vm_sim = Vm_ts.Data;
@@ -958,7 +980,7 @@ if ENABLE_PLOT
         tab_handles.control_input = tab5;
 
         % Extract u from simulation output based on controller type
-        if ControllerType == 1  % R-Controller
+        if ControllerType == 1  % Model Based Control
             u_ts = simOut.get('u');
         else  % PI-Controller
             u_ts = simOut.get('u_pi');
@@ -995,7 +1017,7 @@ if ENABLE_PLOT
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
         if ControllerType == 1
-            ctrl_param_str = sprintf('R-Controller (fB: f=%d, c=%d, e=%d Hz)', fB_f, fB_c, fB_e);
+            ctrl_param_str = sprintf('Model Based Control (fB: f=%d, c=%d, e=%d Hz)', fB_f, fB_c, fB_e);
         else
             ctrl_param_str = sprintf('PI-Controller (Kp=%.1f, Ki=%.1f)', Kp_value, Ki_value);
         end

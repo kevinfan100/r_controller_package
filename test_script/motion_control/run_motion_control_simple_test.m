@@ -5,7 +5,7 @@
 %   - Trajectory Generator (z_sine, xy_circle)
 %   - Particle Dynamics (with Wall Effect and Thermal Force)
 %   - Force Allocation (inverse_model, force_model)
-%   - Inner Loop Control (R-Controller)
+%   - Inner Loop Control (Model Based Control)
 %
 % This script validates the pure MATLAB functions before Simulink integration.
 %
@@ -393,7 +393,7 @@ if run_simulink_test
         ControllerType = 1;
         pi_params = pi_ctrl_params(100, 10000);
         vd_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
-            'Frequency', 100, 'Ts', 1e-5, 'd', 0);
+            'Frequency', 100, 'Ts', 1e-5, 'ff_preview', 0);
 
         % Assign all parameters to base workspace for Simulink
         assignin('base', 'trajectory_generator_params', traj_params);

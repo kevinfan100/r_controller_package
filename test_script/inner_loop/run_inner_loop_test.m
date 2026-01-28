@@ -1,7 +1,7 @@
 % run_inner_loop_test.m
 % Inner loop controller single-frequency test (sine/step mode)
 %
-% This script tests the R-Controller performance at a single frequency.
+% This script tests the Model Based Controller performance at a single frequency.
 % For frequency sweep analysis, use run_inner_loop_bode.m instead.
 %
 % See also: run_inner_loop_bode, model_base_ctrl_params, CLAUDE.md
@@ -28,12 +28,15 @@ signal_type_name = 'sine';          % 'step' or 'sine'
 controller_type = 'model_base_ctrl';
 
 % Signal parameters
-d = 0;                              % Preview steps
+ff_preview = 0;                     % Feedforward preview steps: 0 or 2 (ZPETC)
 channel = 2;                        % Excitation channel (1-6)
 amplitude = 1;                      % Amplitude [V]
 frequency = 4000;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
+
+% Model Based Control feedforward settings
+ff_enable = true;                   % Enable feedforward filter
 
 % Simulation parameters
 step_sim_time = 0.5;                % Step mode simulation time [s]
@@ -42,7 +45,7 @@ step_sim_time = 0.5;                % Step mode simulation time [s]
 config = test_config('Type', 'inner_loop');
 styles = plot_styles();
 
-% R-Controller bandwidths (used when controller_type = 'model_base_ctrl')
+% Model Based Control bandwidths (used when controller_type = 'model_base_ctrl')
 fB_f = 3000;
 fB_c = 2000;
 fB_e = 10000;
@@ -55,7 +58,7 @@ Ki_value = config.Ki_default;
 Ts = config.Ts;
 
 % Always create both controller params (Simulink model needs both)
-ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f);
+ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
 ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
 
 % Compute lambda values (used for display and result struct)
@@ -80,7 +83,7 @@ SAVE_MAT = true;
 
 fprintf('\n');
 fprintf('================================================================\n');
-fprintf('           R Controller Inner Loop Test\n');
+fprintf('       Model Based Controller Inner Loop Test\n');
 fprintf('================================================================\n\n');
 
 % Validation
@@ -109,7 +112,7 @@ vd_sig_params = vd_signal_params( ...
     'Phase', phase, ...
     'StepTime', step_time, ...
     'Ts', Ts, ...
-    'd', d);
+    'ff_preview', ff_preview);
 
 % Create alloc_params (required by Force_Model block, even in Signal mode)
 alloc_params_sim = force_model_allocation_params('Simulink', true, ...
@@ -135,7 +138,7 @@ else
 end
 
 if strcmpi(controller_type, 'model_base_ctrl')
-    fprintf('  d (preview): %d\n', d);
+    fprintf('  ff_enable: %d, ff_preview: %d\n', ff_enable, ff_preview);
     fprintf('  fB_f: %d Hz, fB_c: %d Hz, fB_e: %d Hz\n', fB_f, fB_c, fB_e);
     fprintf('  lambda_f: %.6f, lambda_c: %.6f, lambda_e: %.6f\n', ...
             lambda_f, lambda_c, lambda_e);
@@ -468,7 +471,7 @@ if ENABLE_PLOT
     fprintf('------------------------\n');
 
     % Create tab figure
-    fig_main = uifigure('Name', sprintf('R-Controller Test: %s', test_name), ...
+    fig_main = uifigure('Name', sprintf('Model Based Control Test: %s', test_name), ...
                         'Position', [50 50 1400 900]);
     tabgroup = uitabgroup(fig_main);
     tabgroup.Units = 'normalized';
@@ -588,7 +591,7 @@ if SAVE_PNG || SAVE_MAT
 
     if SAVE_MAT
         result = build_result_struct(test_name, signal_type_name, channel, amplitude, ...
-                                     d, fB_f, fB_c, fB_e, lambda_f, lambda_c, lambda_e, ...
+                                     ff_preview, fB_f, fB_c, fB_e, lambda_f, lambda_c, lambda_e, ...
                                      beta, sim_time, Ts, t, v_d, v_m, u, u_w1, elapsed_time);
 
         % Add controller type info
@@ -636,7 +639,7 @@ if strcmpi(signal_type_name, 'sine')
 end
 
 if strcmpi(controller_type, 'model_base_ctrl')
-    fprintf('  R-Controller: d=%d, fB_c=%d Hz, fB_e=%d Hz\n', d, fB_c, fB_e);
+    fprintf('  Model Based Control: ff_preview=%d, fB_c=%d Hz, fB_e=%d Hz\n', ff_preview, fB_c, fB_e);
 else
     fprintf('  PI Controller: Kp=%.4f, Ki=%.4f\n', Kp_value, Ki_value);
 end
@@ -858,7 +861,7 @@ function tab = create_step_response_plot(tabgroup, t, v_d, v_m, channel, amplitu
 end
 
 function result = build_result_struct(test_name, signal_type_name, channel, amplitude, ...
-                                      d, fB_f, fB_c, fB_e, lambda_f, lambda_c, lambda_e, ...
+                                      ff_preview, fB_f, fB_c, fB_e, lambda_f, lambda_c, lambda_e, ...
                                       beta, sim_time, Ts, t, v_d, v_m, u, u_w1, elapsed_time)
 % Build result structure for saving
     result = struct();
@@ -866,7 +869,7 @@ function result = build_result_struct(test_name, signal_type_name, channel, ampl
     result.config.signal_type_name = signal_type_name;
     result.config.channel = channel;
     result.config.amplitude = amplitude;
-    result.config.d = d;
+    result.config.ff_preview = ff_preview;
     result.config.fB_f = fB_f;
     result.config.fB_c = fB_c;
     result.config.fB_e = fB_e;

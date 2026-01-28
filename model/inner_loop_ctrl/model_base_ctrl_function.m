@@ -1,14 +1,19 @@
 function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
-% MODEL_BASE_CTRL_FUNCTION R Controller with pre-calculated parameters
+% MODEL_BASE_CTRL_FUNCTION Model Based Controller with pre-calculated parameters
 %
-% Implements R Controller using pre-calculated parameters from
+% Implements Model Based Controller using pre-calculated parameters from
 % model_base_ctrl_params(). This function contains ONLY the
 % difference equations for real-time execution.
+%
+% Controller modes (controlled by params.ff_enable):
+%   ff_enable = 1: Feedforward + DOB + PI (ZPETC mode)
+%   ff_enable = 0: DOB + PI only (No feedforward, bypass mode)
 %
 % Inputs:
 %   vd     - Desired voltage (6x1) [V]
 %   vm     - Measured voltage (6x1) [V]
 %   params - Controller parameters from model_base_ctrl_params()
+%            Must include params.ff_enable field
 %
 % Outputs:
 %   u     - Control output (6x1) [A]
@@ -48,13 +53,26 @@ function [u, u_w1] = model_base_ctrl_function(vd, vm, params)
     end
 
     %% Feedforward Filter
-    % [TEST MODE] Bypass feedforward filter (Hf = 1)
-    % Original: vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
-    vf_k = vd;  % Direct passthrough for testing
+    % Controlled by params.ff_enable:
+    %   ff_enable = 1: Use ZPETC feedforward filter
+    %   ff_enable = 0: Bypass feedforward (vf = vd)
+    if params.ff_enable > 0.5
+        % ZPETC Feedforward Filter (Zero Phase Error Tracking Control)
+        % vf[k] = λf*vf[k-1] + kff{b*vd[k] + (1-b*λc)*vd[k-1] - λc*vd[k-2]}
+        % Reference: Inner_ctrl_low.pdf Page 3 (yellow highlight)
+        vf_k = params.lambda_f * vf_k1 + params.kff * ...
+               (params.b * vd + params.one_S_b_M_lambda_c * vd_k1 - params.lambda_c * vd_k2);
 
-    % δvf[k] = vd[k] - (λc+kc)*vd[k-1] - bc*vd[k-2]
-    % [TEST MODE] Using vd instead of vf for structural consistency
-    delta_vf = vd - params.lambda_c_A_kc * vd_k1 - params.bc * vd_k2;
+        % δvf[k] = vf[k] - (λc+kc)*vf[k-1] - bc*vf[k-2]
+        delta_vf = vf_k - params.lambda_c_A_kc * vf_k1 - params.bc * vf_k2;
+    else
+        % Bypass feedforward: vf = vd (direct passthrough)
+        vf_k = vd;
+
+        % δvf[k] = vd[k] - (λc+kc)*vd[k-1] - bc*vd[k-2]
+        % Using vd directly when feedforward is bypassed
+        delta_vf = vd - params.lambda_c_A_kc * vd_k1 - params.bc * vd_k2;
+    end
 
     % δv[k] = vf[k] - vm[k]
     delta_v = vf_k - vm;

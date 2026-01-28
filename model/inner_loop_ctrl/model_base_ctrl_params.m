@@ -1,5 +1,5 @@
-function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
-% MODEL_BASE_CTRL_PARAMS R Controller parameter calculator with Bus Object creation
+function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
+% MODEL_BASE_CTRL_PARAMS Model Based Controller parameter calculator with Bus Object creation
 %
 % Calculate all controller coefficients from bandwidth parameters and create
 % the corresponding Simulink Bus Object definition.
@@ -9,15 +9,31 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
 %   fB_e - Estimator bandwidth [Hz]
 %   fB_f - Feedforward bandwidth [Hz]
 %
+% Optional Parameters (Name-Value pairs):
+%   'ff_enable' - Enable feedforward filter (default: true)
+%                 true  = Use feedforward filter (ZPETC)
+%                 false = Bypass feedforward (vf = vd)
+%
 % Output:
 %   ctrl_params - Simulink.Parameter object with Bus type
 %
 % Example:
+%   % Default: feedforward enabled
 %   ctrl_params = model_base_ctrl_params(300, 500, 1000);
+%
+%   % Disable feedforward for pure feedback control
+%   ctrl_params = model_base_ctrl_params(300, 500, 1000, 'ff_enable', false);
 %
 % Note: This function creates 'ModelBaseCtrlParamsBus' in base workspace
 %
 % See also: model_base_ctrl_function, CLAUDE.md
+
+    %% Parse Optional Parameters
+    p = inputParser;
+    addParameter(p, 'ff_enable', true, @(x) islogical(x) || isnumeric(x));
+    parse(p, varargin{:});
+
+    ff_enable = logical(p.Results.ff_enable);
 
     %% System Constants
     params.k_o = 5.6695e-4;              % Plant gain from H(z^-1)
@@ -85,13 +101,17 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     params.one_A_beta = 1 + beta;        % 1 + beta
     params.neg_beta = -beta;             % -beta
 
+    %% Feedforward Enable Flag
+    % ff_enable: 1.0 = feedforward enabled (ZPETC), 0.0 = feedforward bypassed
+    params.ff_enable = double(ff_enable);
+
     %% Control Law Coefficients
     % ku, a1, a2, one_S_bc, bc already defined above
 
     %% Create Simulink Bus Object
     % Simulink requires explicit Bus Object definition for structures
     ModelBaseCtrlParamsBus = Simulink.Bus;
-    ModelBaseCtrlParamsBus.Description = 'R Controller Parameters Structure';
+    ModelBaseCtrlParamsBus.Description = 'Model Based Controller Parameters Structure';
 
     % Define all bus elements 
     elems(1) = Simulink.BusElement;
@@ -179,6 +199,10 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     elems(21).Name = 'neg_beta';
     elems(21).DataType = 'double';
 
+    elems(22) = Simulink.BusElement;
+    elems(22).Name = 'ff_enable';
+    elems(22).DataType = 'double';
+
     % Assign elements to bus
     ModelBaseCtrlParamsBus.Elements = elems;
 
@@ -189,6 +213,6 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f)
     params_data = params;  % Keep the raw data
     ctrl_params = Simulink.Parameter(params_data);
     ctrl_params.DataType = 'Bus: ModelBaseCtrlParamsBus';
-    ctrl_params.Description = 'R Controller Parameters';
+    ctrl_params.Description = 'Model Based Controller Parameters';
 
 end

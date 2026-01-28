@@ -15,7 +15,7 @@ function v_d = vd_signal_function(signal_type, t, params)
 %       .phase      - Sine phase [deg]
 %       .step_time  - Step transition time [s]
 %       .Ts         - Sampling time [s]
-%       .d          - Preview steps
+%       .ff_preview - Feedforward preview steps (0 or 2)
 %
 % Output:
 %   v_d         - Desired Hall voltage (6x1) [V]
@@ -28,8 +28,8 @@ function v_d = vd_signal_function(signal_type, t, params)
 
 %#codegen
 
-    %% Compute future time (preview)
-    t_future = t + params.Ts * params.d;
+    %% Compute future time (feedforward preview)
+    t_future = t + params.Ts * params.ff_preview;
 
     %% Initialize output
     v_d = zeros(6, 1);

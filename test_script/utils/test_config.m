@@ -118,14 +118,21 @@ function config = test_config(varargin)
     % ========================================================================
     % Controller Type Selection
     % ========================================================================
-    % 'model_base_ctrl' = R-Controller (Model Based Control)
+    % 'model_base_ctrl' = Model Based Control (feedforward + DOB + PI)
     % 'pi_ctrl' = PI Controller
     config.default_controller_type = 'model_base_ctrl';
     config.controller_type_enum.MODEL_BASE_CTRL = 1;
     config.controller_type_enum.PI_CTRL = 2;
 
+    % Controller mode enum (for detailed mode selection)
+    % These enumerate the different operating modes of Model Based Control
+    config.controller_mode_enum.MODEL_BASE_CTRL_NO_FF = 1;      % No feedforward
+    config.controller_mode_enum.MODEL_BASE_CTRL_ZPETC_D0 = 2;   % ZPETC d=0 (no preview)
+    config.controller_mode_enum.MODEL_BASE_CTRL_ZPETC_D2 = 3;   % ZPETC d=2 (true ZPETC)
+    config.controller_mode_enum.PI_CTRL = 4;                     % PI Controller
+
     % ========================================================================
-    % PI Controller Parameters (alternative to R-Controller)
+    % PI Controller Parameters (alternative to Model Based Control)
     % ========================================================================
     config.Kp_default = 2;                  % Default proportional gain
     config.zc_default = 2206;               % Default zero location [rad/s]
