@@ -57,6 +57,19 @@ ControllerType = 1;  % 1 = Model Based Control, 2 = PI Controller
 ff_enable = true;    % Enable feedforward filter (only for Model Based Control)
 
 % -------------------------------------------------------------------------
+% LPF Configuration
+% -------------------------------------------------------------------------
+% lpf_enable: Enable LPF mode (3rd-order controller)
+%   false = Use original 2nd-order controller, Simulink LPF bypassed
+%   true  = Use new 3rd-order controller, Simulink LPF enabled
+%
+% f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
+%   Typical values: 5000, 10000, 20000 Hz
+%
+lpf_enable = false;                 % Default: disabled for backward compatibility
+f_low = 10000;                      % Default: 10 kHz
+
+% -------------------------------------------------------------------------
 % Feedforward Preview Configuration (only for Model Based Control)
 % -------------------------------------------------------------------------
 % ff_preview: Preview steps for Vd generator (0 or 2)
@@ -74,11 +87,12 @@ use_formula_for_preview = true;  % Use formula for preview>0 phase calculation
 % Theory Curves Configuration
 % -------------------------------------------------------------------------
 % Theory curves are auto-selected based on controller settings.
-% Available options: 'zpetc_d0', 'zpetc_d2', 'no_ff', 'pi'
-%   'zpetc_d0' - ZPETC with preview=0 (phase = -2*theta)
-%   'zpetc_d2' - ZPETC with preview=2 (phase = 0, true zero-phase)
-%   'no_ff'    - No feedforward (closed-loop only)
-%   'pi'       - PI controller closed-loop
+% Available options: 'zpetc_d0', 'zpetc_d2', 'zpetc_lpf_d0', 'no_ff', 'pi'
+%   'zpetc_d0'     - ZPETC with preview=0 (phase = -2*theta)
+%   'zpetc_d2'     - ZPETC with preview=2 (phase = 0, true zero-phase)
+%   'zpetc_lpf_d0' - ZPETC with LPF mode (3rd-order, d=0)
+%   'no_ff'        - No feedforward (closed-loop only)
+%   'pi'           - PI controller closed-loop
 THEORY_CURVES = {};  % Auto-populated based on controller settings
 
 % Show preview comparison plots (ZPETC only)
@@ -95,7 +109,10 @@ Ki_value = config.Ki_default;
 Ts = config.Ts;
 
 % Compute controller parameters (both are needed by Simulink model)
-ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
+ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+    'ff_enable', ff_enable, ...
+    'lpf_enable', lpf_enable, ...
+    'f_low', f_low);
 ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
 
 % Derive USE_PI_CONTROLLER for backward compatibility
@@ -111,15 +128,15 @@ SAVE_RESULTS = true;
 % -------------------------------------------------------------------------
 % Control Output Low-Pass Filter (in ZOH Plant)
 % -------------------------------------------------------------------------
-% u_lpf_enable: Enable continuous LPF on control output (after DAC)
-%   0 = Bypass (no filtering, default)
-%   1 = Apply LPF (s-domain first-order)
+% u_lpf_enable: Simulink LPF switch - automatically linked to lpf_enable
+%   When lpf_enable=false: u_lpf_enable=0 (Simulink LPF bypassed)
+%   When lpf_enable=true:  u_lpf_enable=1 (Simulink LPF enabled)
 %
-% f_low: LPF cutoff frequency [Hz]
+% f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
-f_low = 10000;                   % Cutoff frequency [Hz]
+u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% f_low is already set in LPF Configuration section
 
 %% Initialization
 
@@ -131,8 +148,14 @@ if USE_PI_CONTROLLER
     SHOW_PREVIEW_COMPARISON = false;
     THEORY_CURVES = {'pi'};
 else
-    % Model Based Control: select based on ff_enable and ff_preview
-    if ~ff_enable
+    % Model Based Control: select based on lpf_enable, ff_enable, and ff_preview
+    if lpf_enable
+        % LPF mode: use 3rd-order ZPETC theory curve
+        THEORY_CURVES = {'zpetc_lpf_d0'};
+        SHOW_PREVIEW_COMPARISON = false;  % No preview comparison for LPF mode
+        fft_preview_values = [0];  % LPF mode: only d=0
+        use_formula_for_preview = false;
+    elseif ~ff_enable
         THEORY_CURVES = {'no_ff'};
     elseif ff_preview == 0
         THEORY_CURVES = {'zpetc_d0'};
@@ -156,12 +179,20 @@ fprintf('------------------------\n');
 if USE_PI_CONTROLLER
     fprintf('  Controller: PI (Kp=%.1f, Ki=%.1f)\n', Kp_value, Ki_value);
 else
-    if ff_enable
+    if lpf_enable
+        fprintf('  Controller: Model Based Control (LPF mode, f_low=%d Hz)\n', f_low);
+    elseif ff_enable
         fprintf('  Controller: Model Based Control (ZPETC, ff_preview=%d)\n', ff_preview);
     else
         fprintf('  Controller: Model Based Control (No FF)\n');
     end
     fprintf('  Bandwidths: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
+    fprintf('  lpf_enable: %d', lpf_enable);
+    if lpf_enable
+        fprintf(', f_low: %d Hz (3rd-order mode)\n', f_low);
+    else
+        fprintf(' (2nd-order mode)\n');
+    end
     fprintf('  FFT preview values: [%s] (use_formula=%s)\n', ...
             num2str(fft_preview_values), mat2str(use_formula_for_preview));
     fprintf('  Theory curves: {%s}\n', strjoin(THEORY_CURVES, ', '));
@@ -482,6 +513,21 @@ if ~USE_PI_CONTROLLER
                     phi_curve(i) = angle(Hcl);
                 end
                 label = 'Theory (No FF)';
+
+            case 'zpetc_lpf_d0'
+                % ZPETC with LPF mode (3rd-order, d=0)
+                % Reference: FluxControl_LowPassFiltering.pdf
+                % Gain: A(θ; bu) = k_f * (1 + 2*bu*cos(θ) + bu^2)
+                % Phase: φ = -2*θ (d=0)
+                bu = ctrl_params_model_base.Value.bu;
+                kf_lpf = 1 / (1 + bu)^2;  % LPF mode gain factor
+
+                for i = 1:length(freq_theory)
+                    theta = 2 * pi * freq_theory(i) * config.Ts;
+                    A_curve(i) = kf_lpf * (1 + 2*bu*cos(theta) + bu^2);
+                    phi_curve(i) = -2 * theta;  % -2*theta (d=0)
+                end
+                label = 'Theory (LPF d=0)';
 
             case 'pi'
                 % PI controller closed-loop

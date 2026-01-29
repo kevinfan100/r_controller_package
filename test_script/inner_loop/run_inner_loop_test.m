@@ -38,6 +38,19 @@ step_time = 0;                      % Step time [s]
 % Model Based Control feedforward settings
 ff_enable = true;                   % Enable feedforward filter
 
+% -------------------------------------------------------------------------
+% LPF Configuration
+% -------------------------------------------------------------------------
+% lpf_enable: Enable LPF mode (3rd-order controller)
+%   false = Use original 2nd-order controller, Simulink LPF bypassed
+%   true  = Use new 3rd-order controller, Simulink LPF enabled
+%
+% f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
+%   Typical values: 5000, 10000, 20000 Hz
+%
+lpf_enable = false;                 % Default: disabled for backward compatibility
+f_low = 10000;                      % Default: 10 kHz
+
 % Simulation parameters
 step_sim_time = 0.5;                % Step mode simulation time [s]
 
@@ -58,7 +71,10 @@ Ki_value = config.Ki_default;
 Ts = config.Ts;
 
 % Always create both controller params (Simulink model needs both)
-ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
+ctrl_params_model_base = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+    'ff_enable', ff_enable, ...
+    'lpf_enable', lpf_enable, ...
+    'f_low', f_low);
 ctrl_params_pi = pi_ctrl_params(Kp_value, Ki_value, 'Ts', Ts);
 
 % Compute lambda values (used for display and result struct)
@@ -82,15 +98,15 @@ SAVE_MAT = true;
 % -------------------------------------------------------------------------
 % Control Output Low-Pass Filter (in ZOH Plant)
 % -------------------------------------------------------------------------
-% u_lpf_enable: Enable continuous LPF on control output (after DAC)
-%   0 = Bypass (no filtering, default)
-%   1 = Apply LPF (s-domain first-order)
+% u_lpf_enable: Simulink LPF switch - automatically linked to lpf_enable
+%   When lpf_enable=false: u_lpf_enable=0 (Simulink LPF bypassed)
+%   When lpf_enable=true:  u_lpf_enable=1 (Simulink LPF enabled)
 %
-% f_low: LPF cutoff frequency [Hz]
+% f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
-f_low = 10000;                   % Cutoff frequency [Hz]
+u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% f_low is already set in LPF Configuration section
 
 %% Initialization and Validation
 
@@ -152,6 +168,12 @@ end
 
 if strcmpi(controller_type, 'model_base_ctrl')
     fprintf('  ff_enable: %d, ff_preview: %d\n', ff_enable, ff_preview);
+    fprintf('  lpf_enable: %d', lpf_enable);
+    if lpf_enable
+        fprintf(', f_low: %d Hz (3rd-order mode)\n', f_low);
+    else
+        fprintf(' (2nd-order mode)\n');
+    end
     fprintf('  fB_f: %d Hz, fB_c: %d Hz, fB_e: %d Hz\n', fB_f, fB_c, fB_e);
     fprintf('  lambda_f: %.6f, lambda_c: %.6f, lambda_e: %.6f\n', ...
             lambda_f, lambda_c, lambda_e);
@@ -658,7 +680,11 @@ if strcmpi(signal_type_name, 'sine')
 end
 
 if strcmpi(controller_type, 'model_base_ctrl')
-    fprintf('  Model Based Control: ff_preview=%d, fB_c=%d Hz, fB_e=%d Hz\n', ff_preview, fB_c, fB_e);
+    if lpf_enable
+        fprintf('  Model Based Control (LPF): f_low=%d Hz, fB_c=%d Hz, fB_e=%d Hz\n', f_low, fB_c, fB_e);
+    else
+        fprintf('  Model Based Control: ff_preview=%d, fB_c=%d Hz, fB_e=%d Hz\n', ff_preview, fB_c, fB_e);
+    end
 else
     fprintf('  PI Controller: Kp=%.4f, Ki=%.4f\n', Kp_value, Ki_value);
 end
