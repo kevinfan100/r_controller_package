@@ -1,0 +1,99 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+
+\geometry{margin=2.5cm}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.8em}
+
+\title{\textbf{Equivalent Delay of ZOH and Linear Interpolation}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+%=============================================================================
+\section{Time Domain: Impulse Response}
+%=============================================================================
+
+For LTI reconstruction, output is convolution:
+\begin{equation}
+y(t) = \sum_{k} x[k] \cdot h(t - kT_s)
+\end{equation}
+
+To find $h(t)$: set $x[0]=1$, all other $x[k]=0$, then $y(t) = h(t)$.
+
+\textbf{ZOH} (hold for one period):
+\begin{equation}
+h_{\text{ZOH}}(t) = \begin{cases} 1, & 0 \le t < T_s \\ 0, & \text{else} \end{cases}
+\end{equation}
+
+\textbf{Linear interpolation} (output formula for $t \in [kT_s, (k+1)T_s)$):
+\begin{equation}
+y(t) = x[k-1] \cdot \frac{(k+1)T_s - t}{T_s} + x[k] \cdot \frac{t - kT_s}{T_s}
+\end{equation}
+
+Setting $x[0]=1$, others zero:
+\begin{equation}
+h_{\text{linear}}(t) = \begin{cases}
+t/T_s, & 0 \le t < T_s \\
+(2T_s - t)/T_s, & T_s \le t < 2T_s \\
+0, & \text{else}
+\end{cases}
+\end{equation}
+
+%=============================================================================
+\section{Laplace Transform}
+%=============================================================================
+
+\textbf{ZOH:}
+\begin{equation}
+H_{\text{ZOH}}(s) = \int_0^{T_s} 1 \cdot e^{-st} \, dt = \frac{1 - e^{-sT_s}}{s}
+\end{equation}
+
+\textbf{Linear interpolation:}
+\begin{equation}
+H_{\text{linear}}(s) = \int_0^{T_s} \frac{t}{T_s} e^{-st} dt + \int_{T_s}^{2T_s} \frac{2T_s - t}{T_s} e^{-st} dt = \frac{(1 - e^{-sT_s})^2}{s^2 T_s}
+\end{equation}
+
+%=============================================================================
+\section{Frequency Response}
+%=============================================================================
+
+Substitute $s = j\omega$:
+
+\textbf{ZOH:}
+\begin{align}
+H_{\text{ZOH}}(j\omega) &= \frac{1 - e^{-j\omega T_s}}{j\omega} = e^{-j\omega T_s/2} \cdot \frac{2\sin(\omega T_s/2)}{\omega}
+\end{align}
+
+Phase: $\boxed{\angle H_{\text{ZOH}} = -\omega \cdot \dfrac{T_s}{2}}$
+
+\textbf{Linear interpolation:}
+\begin{align}
+H_{\text{linear}}(j\omega) &= \frac{(1 - e^{-j\omega T_s})^2}{(j\omega)^2 T_s} = e^{-j\omega T_s} \cdot \frac{4\sin^2(\omega T_s/2)}{\omega^2 T_s}
+\end{align}
+
+Phase: $\boxed{\angle H_{\text{linear}} = -\omega \cdot T_s}$
+
+%=============================================================================
+\section{Equivalent Delay}
+%=============================================================================
+
+Phase delay relates to time delay by $\phi = -\omega \tau$, so:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & \textbf{Delay} $\tau$ & \textbf{Delay Steps} $d = \tau/T_s$ \\
+\midrule
+ZOH & $T_s/2$ & $\boxed{0.5}$ \\
+Linear Interpolation & $T_s$ & $\boxed{1.0}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
