@@ -86,17 +86,30 @@ pos_m_interp_enable = 0;
 pos_update_rate = 1600;         % Position update rate [Hz]
 
 % -------------------------------------------------------------------------
+% LPF Configuration
+% -------------------------------------------------------------------------
+% lpf_enable: Enable LPF mode (3rd-order controller)
+%   false = Use original 2nd-order controller, Simulink LPF bypassed
+%   true  = Use new 3rd-order controller, Simulink LPF enabled
+%
+% f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
+%   Typical values: 5000, 10000, 20000 Hz
+%
+lpf_enable = false;                 % Default: disabled for backward compatibility
+f_low = 10000;                      % Default: 10 kHz
+
+% -------------------------------------------------------------------------
 % Control Output Low-Pass Filter (in ZOH Plant)
 % -------------------------------------------------------------------------
-% u_lpf_enable: Enable continuous LPF on control output (after DAC)
-%   0 = Bypass (no filtering, default)
-%   1 = Apply LPF (s-domain first-order)
+% u_lpf_enable: Simulink LPF switch - automatically linked to lpf_enable
+%   When lpf_enable=false: u_lpf_enable=0 (Simulink LPF bypassed)
+%   When lpf_enable=true:  u_lpf_enable=1 (Simulink LPF enabled)
 %
-% f_low: LPF cutoff frequency [Hz]
+% f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
-f_low = 10000;                   % Cutoff frequency [Hz]
+u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% f_low is already set in LPF Configuration section
 
 % === Inner Loop Controller ===
 % Options: 'model_base_ctrl' or 'pi_ctrl'
@@ -215,9 +228,16 @@ fprintf('  thermal_force_params created\n');
 
 % Inner loop controller parameters
 if strcmpi(controller_type, 'model_base_ctrl')
-    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+        'lpf_enable', lpf_enable, ...
+        'f_low', f_low);
     ControllerType = 1;
-    fprintf('  model_base_ctrl_params created (fB: c=%d, e=%d, f=%d Hz)\n', fB_c, fB_e, fB_f);
+    if lpf_enable
+        fprintf('  model_base_ctrl_params created (LPF mode, f_low=%d Hz, fB: c=%d, e=%d, f=%d Hz)\n', ...
+            f_low, fB_c, fB_e, fB_f);
+    else
+        fprintf('  model_base_ctrl_params created (fB: c=%d, e=%d, f=%d Hz)\n', fB_c, fB_e, fB_f);
+    end
 else
     ctrl_params = pi_ctrl_params(Kp_value, Ki_value);
     ControllerType = 2;
@@ -289,7 +309,9 @@ if strcmpi(controller_type, 'model_base_ctrl')
     pi_params = pi_ctrl_params(Kp_value, Ki_value);
 else
     pi_params = ctrl_params;
-    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f);
+    ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+        'lpf_enable', lpf_enable, ...
+        'f_low', f_low);
 end
 
 % Assign all to base workspace

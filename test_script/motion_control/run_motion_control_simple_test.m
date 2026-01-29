@@ -379,7 +379,11 @@ if run_simulink_test
         particle_params = particle_dynamics_params(...
             'WallEffectEnable', 1, 'HInit', 5);
         thermal_params = thermal_force_params('Enable', 0);
-        ctrl_params = model_base_ctrl_params(500, 500, 3000);
+        % LPF Configuration (default: disabled for backward compatibility)
+        lpf_enable = false;
+        f_low = 10000;
+        ctrl_params = model_base_ctrl_params(500, 500, 3000, ...
+            'lpf_enable', lpf_enable, 'f_low', f_low);
         alloc_params = force_model_allocation_params('Simulink', true, 'PosMSource', 1);
         p0 = calc_initial_position_function(particle_params.Value);
         signal_type = 3;  % Motion Control mode
@@ -395,9 +399,8 @@ if run_simulink_test
         vd_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
             'Frequency', 100, 'Ts', 1e-5, 'ff_preview', 0);
 
-        % Control output LPF parameters (for ZOH Plant)
-        u_lpf_enable = 0;            % 0=bypass (default), 1=enable LPF
-        f_low = 10000;               % Cutoff frequency [Hz]
+        % Control output LPF parameters (for ZOH Plant) - linked to lpf_enable
+        u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
         w_low = 2*pi*f_low;          % Convert to rad/s
 
         % Assign all parameters to base workspace for Simulink
