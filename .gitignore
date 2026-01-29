@@ -17,6 +17,13 @@ test_results/**/*.png
 *.asv
 *.m~
 
+# LaTeX build artifacts
+*.aux
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
 # OS files
 *.log
 Thumbs.db
