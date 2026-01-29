@@ -141,12 +141,27 @@ function lpf_params = lpf_system_params(f_low, varargin)
         a2 = -abs(poles_complex(1))^2;
     end
 
-    % Convert to standard form coefficients used in control law
-    % Den(z^-1) = 1 - a1*z^-1 - a2*z^-2 - a3*z^-3
-    % where a3 = contribution from p3
-    lpf_params.a1 = a1;
-    lpf_params.a2 = a2;
-    lpf_params.a3 = -a2 * p3;  % Cross term: -(-p1*p2)*p3 = p1*p2*p3
+    %% Extract 3rd-Order Denominator Coefficients
+    % The control law uses: Den(z^-1) = 1 - a1*z^-1 - a2*z^-2 - a3*z^-3
+    % From MATLAB's c2d, den_z is in z-form: [1, d1, d2, d3]
+    % where d1 = coeff of z^2, d2 = coeff of z, d3 = coeff of z^0
+    % Converting to z^-1 form: 1 + d1*z^-1 + d2*z^-2 + d3*z^-3
+    %
+    % For control law standard form: 1 - a1*z^-1 - a2*z^-2 - a3*z^-3
+    % We have: a1 = -d1, a2 = -d2, a3 = -d3
+
+    % Extract from normalized denominator
+    a1_3rd = -den_z(2);  % a1 for 3rd-order system
+    a2_3rd = -den_z(3);  % a2 for 3rd-order system
+    a3_3rd = -den_z(4);  % a3 for 3rd-order system
+
+    lpf_params.a1 = a1_3rd;
+    lpf_params.a2 = a2_3rd;
+    lpf_params.a3 = a3_3rd;
+
+    % Also store original 2nd-order coefficients for reference
+    lpf_params.a1_2nd = a1;
+    lpf_params.a2_2nd = a2;
 
     %% Store Results
     lpf_params.k_o_lpf = k_o_lpf;

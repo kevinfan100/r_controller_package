@@ -140,7 +140,13 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
         params.bu = lpf_sys.bu;              % Non-minimum phase zero (≈3.16)
         params.ba = lpf_sys.ba;              % Minimum phase zero (≈0.22)
         params.p3 = lpf_sys.p3;              % LPF pole (≈0.53)
-        params.a3 = lpf_sys.a3;              % 3rd pole coefficient
+
+        % IMPORTANT: Override a1, a2, a3 with 3rd-order system coefficients
+        % The control law uses: Den(z^-1) = 1 - a1*z^-1 - a2*z^-2 - a3*z^-3
+        % These must be the full 3rd-order coefficients, not the original 2nd-order ones
+        params.a1 = lpf_sys.a1;              % 3rd-order: ≈2.47
+        params.a2 = lpf_sys.a2;              % 3rd-order: ≈-1.97
+        params.a3 = lpf_sys.a3;              % 3rd-order: ≈0.50
 
         % Recalculate control gain for 3rd-order system
         params.ku_lpf = kc / params.k_o_lpf;
