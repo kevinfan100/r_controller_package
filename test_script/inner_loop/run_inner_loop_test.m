@@ -79,6 +79,19 @@ ENABLE_PLOT = true;
 SAVE_PNG = true;
 SAVE_MAT = true;
 
+% -------------------------------------------------------------------------
+% Control Output Low-Pass Filter (in ZOH Plant)
+% -------------------------------------------------------------------------
+% u_lpf_enable: Enable continuous LPF on control output (after DAC)
+%   0 = Bypass (no filtering, default)
+%   1 = Apply LPF (s-domain first-order)
+%
+% f_low: LPF cutoff frequency [Hz]
+%   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
+%
+u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
+f_low = 10000;                   % Cutoff frequency [Hz]
+
 %% Initialization and Validation
 
 fprintf('\n');
@@ -242,6 +255,12 @@ assignin('base', 'delay_steps', 0);  % No delay for inner loop test
 % pos_m_static timeseries (required by From Workspace blocks)
 pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
 assignin('base', 'pos_m_static', pos_m_static);
+
+% Control output LPF parameters (for ZOH Plant)
+w_low = 2*pi*f_low;              % Convert to rad/s
+assignin('base', 'u_lpf_enable', u_lpf_enable);
+assignin('base', 'f_low', f_low);
+assignin('base', 'w_low', w_low);
 
 fprintf('  Parameters loaded to workspace\n');
 fprintf('    signal_type=%d, vd_signal_params (Bus), alloc_params (Bus)\n\n', signal_type);

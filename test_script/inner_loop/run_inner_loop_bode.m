@@ -73,13 +73,13 @@ use_formula_for_preview = true;  % Use formula for preview>0 phase calculation
 % -------------------------------------------------------------------------
 % Theory Curves Configuration
 % -------------------------------------------------------------------------
-% Select which theory curves to display (max 2 recommended)
-% Options: 'zpetc_d0', 'zpetc_d2', 'no_ff', 'pi'
+% Theory curves are auto-selected based on controller settings.
+% Available options: 'zpetc_d0', 'zpetc_d2', 'no_ff', 'pi'
 %   'zpetc_d0' - ZPETC with preview=0 (phase = -2*theta)
 %   'zpetc_d2' - ZPETC with preview=2 (phase = 0, true zero-phase)
 %   'no_ff'    - No feedforward (closed-loop only)
 %   'pi'       - PI controller closed-loop
-THEORY_CURVES = {'zpetc_d0', 'no_ff'};  % Theory curves to display
+THEORY_CURVES = {};  % Auto-populated based on controller settings
 
 % Show preview comparison plots (ZPETC only)
 SHOW_PREVIEW_COMPARISON = true;
@@ -108,13 +108,37 @@ lambda_f = ctrl_params_model_base.Value.lambda_f;
 % Output settings
 SAVE_RESULTS = true;
 
+% -------------------------------------------------------------------------
+% Control Output Low-Pass Filter (in ZOH Plant)
+% -------------------------------------------------------------------------
+% u_lpf_enable: Enable continuous LPF on control output (after DAC)
+%   0 = Bypass (no filtering, default)
+%   1 = Apply LPF (s-domain first-order)
+%
+% f_low: LPF cutoff frequency [Hz]
+%   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
+%
+u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
+f_low = 10000;                   % Cutoff frequency [Hz]
+
 %% Initialization
 
-% Adjust preview values based on controller type
+% Auto-select theory curves and adjust settings based on controller type
 if USE_PI_CONTROLLER
+    % PI Controller
     fft_preview_values = [0];  % PI: only preview=0
     use_formula_for_preview = false;
     SHOW_PREVIEW_COMPARISON = false;
+    THEORY_CURVES = {'pi'};
+else
+    % Model Based Control: select based on ff_enable and ff_preview
+    if ~ff_enable
+        THEORY_CURVES = {'no_ff'};
+    elseif ff_preview == 0
+        THEORY_CURVES = {'zpetc_d0'};
+    else  % ff_preview == 2
+        THEORY_CURVES = {'zpetc_d2'};
+    end
 end
 num_fft_previews = length(fft_preview_values);
 
@@ -269,6 +293,12 @@ for freq_idx = 1:num_freq
     % pos_m_static timeseries (required by From Workspace blocks)
     pos_m_static = timeseries(zeros(2, 3), [0; sim_time]);
     assignin('base', 'pos_m_static', pos_m_static);
+
+    % Control output LPF parameters (for ZOH Plant)
+    w_low = 2*pi*f_low;              % Convert to rad/s
+    assignin('base', 'u_lpf_enable', u_lpf_enable);
+    assignin('base', 'f_low', f_low);
+    assignin('base', 'w_low', w_low);
 
     % Configure Simulink
     % Use ode45 (variable-step) instead of ode5 (fixed-step) to handle

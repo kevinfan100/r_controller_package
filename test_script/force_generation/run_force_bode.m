@@ -54,8 +54,20 @@ controller_type = 'model_base_ctrl';   % 'model_base_ctrl' or 'pi_controller'
 %   0 - No preview (ZPETC d=0, phase lag = -2*theta)
 %   2 - 2-step preview (ZPETC d=2, zero phase error)
 %
-ff_enable = true;                       % Enable feedforward filter
+ff_enable = true;                        % Enable feedforward filter
 ff_preview = 0;                         % Preview steps: 0 or 2
+
+% -------------------------------------------------------------------------
+% 1.1.2 Theory Curves Configuration (for Bode plot)
+% -------------------------------------------------------------------------
+% Select which theory curves to display
+% Options:
+%   'zpetc_d0' - ZPETC with preview=0 (phase = φ_rate - 2θ_inner)
+%   'zpetc_d2' - ZPETC with preview=2 (phase = φ_rate only)
+%   'no_ff'    - No feedforward (closed-loop inner + rate transition)
+%   'pi'       - PI controller closed-loop
+THEORY_CURVES = {};  % Auto-populated based on controller settings
+SHOW_COMPARISON_CURVES = false;  % Only show theory curve for current controller mode
 
 % -------------------------------------------------------------------------
 % 1.2 Force Direction (single axis)
@@ -83,11 +95,11 @@ bead_position = [0; 0; 0];    % [x; y; z] in um
 % QUICK_TEST mode: Use fewer points for faster testing
 % FULL mode: All points for complete characterization
 %
-QUICK_TEST = false;             % Set to false for full frequency sweep
+QUICK_TEST = false;              % Set to false for full frequency sweep
 
 if QUICK_TEST
     % Quick test: 6 points (10 Hz ~ 500 Hz)
-    frequencies = [10, 50, 100, 200, 400, 500];  % Hz
+    frequencies = [1, 10, 50, 100, 200, 400, 500, 625, 800, 1000, 2000, 3200, 4000];  % Hz
 else
     % Full sweep: 11 points (1 Hz ~ 500 Hz)
     % Note: Max freq limited by pos_update_rate (Nyquist = 800 Hz)
@@ -96,8 +108,17 @@ else
 end
 
 % -------------------------------------------------------------------------
-% 1.6 Hardware Constraint (Position Update Rate)
+% 1.6 Signal Generation Mode
 % -------------------------------------------------------------------------
+% Select signal generation mode:
+%   'hardware' - Simulate hardware constraint (1600 Hz generation + interpolation)
+%   'ideal'    - Direct 100 kHz generation (no interpolation delay)
+generation_mode = 'hardware';      % 'hardware' or 'ideal'
+
+% -------------------------------------------------------------------------
+% 1.7 Hardware Constraint (Position Update Rate)
+% -------------------------------------------------------------------------
+% Only used when generation_mode = 'hardware'
 % Real hardware has limited position update rate (e.g., 1600 Hz from camera)
 % This affects high-frequency response due to interpolation delay
 %
@@ -110,21 +131,21 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay for linear)
                                 % false = Ideal (non-causal interpolation)
 
 % -------------------------------------------------------------------------
-% 1.7 Model Based Control Bandwidth
+% 1.8 Model Based Control Bandwidth
 % -------------------------------------------------------------------------
 fB_f = 3000;                    % Feedforward bandwidth [Hz]
 fB_c = 3200;                    % Controller bandwidth [Hz]
 fB_e = 16000;                    % Estimator bandwidth [Hz]
 
 % -------------------------------------------------------------------------
-% 1.8 PI Controller Parameters
+% 1.9 PI Controller Parameters
 % -------------------------------------------------------------------------
 Kp_value = 2;                   % Proportional gain
 zc = 2206;                      % Zero location [rad/s]
 Ki_value = Kp_value * zc;       % Integral gain (Ki = Kp * zc = 4412)
 
 % -------------------------------------------------------------------------
-% 1.9 Simulation Cycles
+% 1.10 Simulation Cycles
 % -------------------------------------------------------------------------
 % NOTE: Lower frequencies require longer simulation times!
 %   1 Hz with 100 cycles = 100 s sim time => ~5 hours computation
@@ -141,20 +162,20 @@ max_sim_time = 5.0;             % Maximum simulation time [s] (for low freq)
                                 % WARNING: Setting this > 10 will be very slow!
 
 % -------------------------------------------------------------------------
-% 1.10 Quality Check Parameters
+% 1.11 Quality Check Parameters
 % -------------------------------------------------------------------------
 steady_state_threshold = 0.02;  % Steady-state threshold (2% of amplitude)
 dc_tolerance = 0.01;            % DC tolerance (1% of amplitude)
 
 % -------------------------------------------------------------------------
-% 1.11 Output Control
+% 1.12 Output Control
 % -------------------------------------------------------------------------
 SAVE_PNG = true;
 SAVE_MAT = true;
 output_dir = fullfile(package_root, 'test_results', 'force_generation', 'force_bode');
 
 % -------------------------------------------------------------------------
-% 1.12 Plot Style
+% 1.13 Plot Style
 % -------------------------------------------------------------------------
 measurement_linewidth = 2.5;
 reference_linewidth = 2.0;
@@ -165,6 +186,19 @@ title_fontsize = 15;
 tick_fontsize = 12;
 legend_fontsize = 11;
 marker_size = 8;
+
+% -------------------------------------------------------------------------
+% 1.14 Control Output Low-Pass Filter (in ZOH Plant)
+% -------------------------------------------------------------------------
+% u_lpf_enable: Enable continuous LPF on control output (after DAC)
+%   0 = Bypass (no filtering, default)
+%   1 = Apply LPF (s-domain first-order)
+%
+% f_low: LPF cutoff frequency [Hz]
+%   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
+%
+u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
+f_low = 10000;                   % Cutoff frequency [Hz]
 
 
 %% ========================================================================
@@ -197,6 +231,31 @@ if strcmpi(controller_type, 'model_base_ctrl')
 else
     ControllerType = 2;
     controller_label = 'PI-Controller';
+end
+
+% Auto-select theory curves based on controller configuration
+if ControllerType == 1  % Model Based Control
+    if ~ff_enable
+        THEORY_CURVES = {'no_ff'};
+        if SHOW_COMPARISON_CURVES
+            THEORY_CURVES = [THEORY_CURVES, {'zpetc_d0', 'pi'}];
+        end
+    elseif ff_preview == 0
+        THEORY_CURVES = {'zpetc_d0'};
+        if SHOW_COMPARISON_CURVES
+            THEORY_CURVES = [THEORY_CURVES, {'zpetc_d2', 'no_ff'}];
+        end
+    else  % ff_preview == 2
+        THEORY_CURVES = {'zpetc_d2'};
+        if SHOW_COMPARISON_CURVES
+            THEORY_CURVES = [THEORY_CURVES, {'zpetc_d0', 'no_ff'}];
+        end
+    end
+else  % PI Controller
+    THEORY_CURVES = {'pi'};
+    if SHOW_COMPARISON_CURVES
+        THEORY_CURVES = [THEORY_CURVES, {'zpetc_d0'}];
+    end
 end
 
 % Load system parameters (for inverse_model / force_model)
@@ -241,13 +300,17 @@ if ControllerType == 1
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
-fprintf('  Hardware constraint: %d Hz position update\n', pos_update_rate);
-if USE_REALTIME_INTERP
-    interp_mode_str = 'real-time';
-else
-    interp_mode_str = 'ideal';
+fprintf('  Theory curves: {%s}\n', strjoin(THEORY_CURVES, ', '));
+fprintf('  Generation mode: %s\n', upper(generation_mode));
+if strcmpi(generation_mode, 'hardware')
+    fprintf('  Hardware constraint: %d Hz position update\n', pos_update_rate);
+    if USE_REALTIME_INTERP
+        interp_mode_str = 'real-time';
+    else
+        interp_mode_str = 'ideal';
+    end
+    fprintf('  Interpolation: %s (%s)\n', interp_method, interp_mode_str);
 end
-fprintf('  Interpolation: %s (%s)\n', interp_method, interp_mode_str);
 fprintf('  Simulation cycles: total=%d, skip=%d, FFT=%d\n', ...
         total_cycles, skip_cycles, fft_cycles);
 fprintf('  Max simulation time: %.1f s\n', max_sim_time);
@@ -368,7 +431,9 @@ for freq_idx = 1:num_freq
 
     % Hardware constraint parameters for Simulink (set via alloc_params.sample_rate_mode)
     % sample_rate_mode: 1=ZOH (1600 Hz), 2=Linear (1600 Hz), 3=Direct (100 kHz)
-    if strcmpi(interp_method, 'previous')
+    if strcmpi(generation_mode, 'ideal')
+        sample_rate_mode = 3;  % Direct (100 kHz)
+    elseif strcmpi(interp_method, 'previous')
         sample_rate_mode = 1;  % ZOH
     else
         sample_rate_mode = 2;  % Linear
@@ -423,6 +488,12 @@ for freq_idx = 1:num_freq
     assignin('base', 'ControllerType', ControllerType);
     assignin('base', 'Kp_value', Kp_value);
     assignin('base', 'Ki_value', Ki_value);
+
+    % Control output LPF parameters (for ZOH Plant)
+    w_low = 2*pi*f_low;
+    assignin('base', 'u_lpf_enable', u_lpf_enable);
+    assignin('base', 'f_low', f_low);
+    assignin('base', 'w_low', w_low);
 
     % Motion Control parameters (required by Simulink model even in Force mode)
     motion_ctrl_params = motion_control_law_params('Enable', 0);
@@ -651,6 +722,152 @@ phase_lag_deg = phase_lag_rad * 180 / pi;
 
 
 %% ========================================================================
+%                      SECTION 3.5: Theory Curves Computation
+%% ========================================================================
+
+fprintf('[Theory Curves Computation]\n');
+fprintf('------------------------\n');
+
+% Dense frequency points for smooth theoretical curves
+freq_theory = logspace(log10(max(frequencies(1), 0.1)), ...
+                       log10(frequencies(end)*1.5), 500);
+
+% Rate transition delay
+if strcmpi(generation_mode, 'ideal')
+    tau_rate = 0;  % No rate transition delay in ideal mode
+elseif USE_REALTIME_INTERP && strcmp(interp_method, 'linear')
+    tau_rate = 1 / pos_update_rate;
+elseif USE_REALTIME_INTERP && strcmp(interp_method, 'previous')
+    tau_rate = 0.5 / pos_update_rate;
+else
+    tau_rate = 0;
+end
+
+% Inner loop parameters from Model Based Control
+b_value = model_base_ctrl_params_local.Value.b;
+lambda_c = model_base_ctrl_params_local.Value.lambda_c;
+kc = model_base_ctrl_params_local.Value.kc;
+kf = 1 / (1 + b_value)^2;
+
+% Pre-compute rate transition magnitude response for all frequencies
+% Based on PDF derivation: ZOH = sinc(f/fs), Linear = sinc²(f/fs)
+H_rate_mag = ones(size(freq_theory));
+if strcmpi(generation_mode, 'hardware')
+    for i = 1:length(freq_theory)
+        x = freq_theory(i) / pos_update_rate;  % Normalized frequency
+        if x < 1e-10
+            sinc_val = 1;  % lim sinc(x) as x->0 = 1
+        else
+            sinc_val = sin(pi * x) / (pi * x);
+        end
+
+        if strcmpi(interp_method, 'linear')
+            % Linear interpolation: sinc²(f/fs)
+            H_rate_mag(i) = sinc_val^2;
+        else
+            % ZOH (previous): sinc(f/fs)
+            H_rate_mag(i) = abs(sinc_val);
+        end
+    end
+end
+
+% Theory curves computation loop
+theory_curves_data = struct([]);
+theory_line_styles = {'-', '--', ':', '-.'};
+
+for curve_idx = 1:length(THEORY_CURVES)
+    curve_type = THEORY_CURVES{curve_idx};
+    A_curve = zeros(size(freq_theory));
+    phi_curve = zeros(size(freq_theory));
+
+    switch curve_type
+        case 'zpetc_d0'
+            % ZPETC with preview=0: phase = φ_rate - 2*θ_inner
+            for i = 1:length(freq_theory)
+                f = freq_theory(i);
+                theta = 2 * pi * f * Ts;
+                phi_rate = -2 * pi * f * tau_rate;
+                A_ctrl = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+                A_curve(i) = H_rate_mag(i) * A_ctrl;  % Include rate transition
+                phi_curve(i) = phi_rate + (-2 * theta);
+            end
+            label = 'Theory (ZPETC d=0)';
+
+        case 'zpetc_d2'
+            % ZPETC with preview=2: phase = φ_rate only
+            for i = 1:length(freq_theory)
+                f = freq_theory(i);
+                theta = 2 * pi * f * Ts;
+                phi_rate = -2 * pi * f * tau_rate;
+                A_ctrl = kf * (1 + 2*b_value*cos(theta) + b_value^2);
+                A_curve(i) = H_rate_mag(i) * A_ctrl;  % Include rate transition
+                phi_curve(i) = phi_rate;
+            end
+            label = 'Theory (ZPETC d=2)';
+
+        case 'no_ff'
+            % No feedforward: closed-loop inner + rate transition
+            % Hcl = z^-1 * kc * (1+b*z^-1) / (1-λc*z^-1)
+            for i = 1:length(freq_theory)
+                f = freq_theory(i);
+                theta = 2 * pi * f * Ts;
+                z_inv = exp(-1j * theta);
+                Hcl = (z_inv * kc * (1 + b_value * z_inv)) / (1 - lambda_c * z_inv);
+                phi_rate = -2 * pi * f * tau_rate;
+                A_curve(i) = H_rate_mag(i) * abs(Hcl);  % Include rate transition
+                phi_curve(i) = phi_rate + angle(Hcl);
+            end
+            label = 'Theory (No FF)';
+
+        case 'pi'
+            % PI controller closed-loop
+            for i = 1:length(freq_theory)
+                f = freq_theory(i);
+                w = 2 * pi * f;
+                jw = 1j * w;
+                C_jw = Kp_value * (jw + zc) / jw;
+                P_jw = exp(-1j * w * tau_rate);
+                L_jw = C_jw * P_jw;
+                H_jw = L_jw / (1 + L_jw);
+                A_curve(i) = H_rate_mag(i) * abs(H_jw);  % Include rate transition
+                phi_curve(i) = angle(H_jw);
+            end
+            label = 'Theory (PI)';
+
+        otherwise
+            warning('Unknown theory curve type: %s', curve_type);
+            continue;
+    end
+
+    idx = length(theory_curves_data) + 1;
+    theory_curves_data(idx).type = curve_type;
+    theory_curves_data(idx).label = label;
+    theory_curves_data(idx).A = A_curve;
+    theory_curves_data(idx).phi_deg = unwrap(phi_curve) * (180/pi);
+    theory_curves_data(idx).line_style = theory_line_styles{min(curve_idx, 4)};
+end
+
+fprintf('  Computed %d theory curves\n', length(theory_curves_data));
+fprintf('    tau_rate = %.4f s (%.2f µs)\n', tau_rate, tau_rate*1e6);
+if strcmpi(generation_mode, 'hardware')
+    if strcmpi(interp_method, 'linear')
+        fprintf('    Magnitude response: sinc²(f/fs) [Linear Interp]\n');
+    else
+        fprintf('    Magnitude response: sinc(f/fs) [ZOH]\n');
+    end
+    % Show attenuation at key frequencies
+    test_f = [100, 200, 250];
+    for tf = test_f
+        [~, idx] = min(abs(freq_theory - tf));
+        fprintf('    H_rate_mag @ %d Hz: %.4f (%.1f%%)\n', tf, H_rate_mag(idx), H_rate_mag(idx)*100);
+    end
+else
+    fprintf('    Magnitude response: 1 (no attenuation) [Ideal]\n');
+end
+fprintf('\n');
+
+
+%% ========================================================================
 %                      SECTION 4: Analysis & Summary
 %% ========================================================================
 
@@ -739,63 +956,6 @@ unified_linewidth = 3.5;
 unified_markersize = 9;
 
 % -------------------------------------------------------------------------
-% Compute PI Controller Theoretical Response (if PI mode)
-% -------------------------------------------------------------------------
-% PI Controller: C(s) = Kp(1 + zc/s) = Kp(s + zc)/s
-% With hardware constraint delay: tau = Ts_pos (for linear interpolation)
-%
-% The closed-loop transfer function with delay is complex, so we compute
-% the frequency response numerically.
-%
-if ControllerType == 2  % PI Controller
-    fprintf('  Computing PI theoretical response...\n');
-
-    % Dense frequency points for smooth theoretical curve
-    freq_theory = logspace(log10(frequencies(1)), log10(frequencies(end)*1.5), 500);
-
-    % Hardware delay (linear interpolation introduces ~1 period delay)
-    if USE_REALTIME_INTERP && strcmp(interp_method, 'linear')
-        tau = 1 / pos_update_rate;  % 1-period delay
-    elseif USE_REALTIME_INTERP && strcmp(interp_method, 'previous')
-        tau = 0.5 / pos_update_rate;  % 0.5-period delay for ZOH
-    else
-        tau = 0;  % No delay in ideal mode
-    end
-
-    % Compute closed-loop frequency response
-    % Open-loop: L(jw) = Kp * (jw + zc) / jw * e^(-j*w*tau)
-    % Closed-loop: H(jw) = L(jw) / (1 + L(jw))
-
-    A_theory_pi = zeros(size(freq_theory));
-    phi_theory_pi = zeros(size(freq_theory));
-
-    for i = 1:length(freq_theory)
-        w = 2 * pi * freq_theory(i);
-        jw = 1j * w;
-
-        % PI controller: C(jw) = Kp * (jw + zc) / jw
-        C_jw = Kp_value * (jw + zc) / jw;
-
-        % Plant with delay: P(jw) = e^(-j*w*tau)
-        P_jw = exp(-1j * w * tau);
-
-        % Open-loop: L(jw) = C(jw) * P(jw)
-        L_jw = C_jw * P_jw;
-
-        % Closed-loop: H(jw) = L(jw) / (1 + L(jw))
-        H_jw = L_jw / (1 + L_jw);
-
-        A_theory_pi(i) = abs(H_jw);
-        phi_theory_pi(i) = angle(H_jw) * 180 / pi;
-    end
-
-    % Unwrap phase for continuous display
-    phi_theory_pi = unwrap(phi_theory_pi * pi / 180) * 180 / pi;
-
-    fprintf('  PI theoretical response computed (tau = %.4f s)\n', tau);
-end
-
-% -------------------------------------------------------------------------
 % Create main figure (same style as run_frequency_sweep.m)
 % -------------------------------------------------------------------------
 fig = figure('Name', sprintf('Force Frequency Response - %s Excitation', force_axis), ...
@@ -810,25 +970,48 @@ hold on; grid off;
 % Define theory curve color (gray, same as run_frequency_sweep.m)
 theory_color = [0.5, 0.5, 0.5];
 
-% Plot theoretical curve first (bottom layer) - PI mode only
-if ControllerType == 2
-    plot_handle_theory_mag = semilogx(freq_theory, A_theory_pi, '-', ...
+% Plot all theory curves first (bottom layer)
+h_theory_mag = gobjects(length(theory_curves_data), 1);
+for curve_idx = 1:length(theory_curves_data)
+    h_theory_mag(curve_idx) = semilogx(freq_theory, theory_curves_data(curve_idx).A, ...
+        theory_curves_data(curve_idx).line_style, ...
         'LineWidth', unified_linewidth, ...
         'Color', theory_color, ...
-        'DisplayName', 'Theory');
+        'DisplayName', theory_curves_data(curve_idx).label);
 end
 
 % Plot all 3 axes responses (Fm_x/Fd, Fm_y/Fd, Fm_z/Fd)
+% Use markers only (no connecting lines)
+% Plot order: large non-excited -> excited -> small non-excited (top layer)
+% Small markers drawn last so they won't be hidden by large ones
 plot_handles_mag = gobjects(3, 1);
 
-for ax = 1:3
+% Determine plot order: large markers first, small markers last (top layer)
+non_excited_axes = setdiff([1, 2, 3], axis_idx);
+% Plot order: second non-excited (large) -> excited (large) -> first non-excited (small, top)
+plot_order = [non_excited_axes(2), axis_idx, non_excited_axes(1)];
+
+for plot_idx = 1:3
+    ax = plot_order(plot_idx);
     mag = crosstalk_ratio(:, ax);  % This contains |Fm_ax / Fd_excited|
-    plot_handles_mag(ax) = semilogx(frequencies, mag, ['--' force_markers{ax}], ...
-        'LineWidth', unified_linewidth, ...
+
+    if ax == non_excited_axes(1)
+        % First non-excited axis: smaller markers (80%), drawn last (top layer)
+        marker_size = unified_markersize * 0.8;
+        line_width = unified_linewidth * 0.8;
+    else
+        % Excited axis and second non-excited: full size markers
+        marker_size = unified_markersize;
+        line_width = unified_linewidth;
+    end
+
+    plot_handles_mag(ax) = semilogx(frequencies, mag, force_markers{ax}, ...
+        'LineStyle', 'none', ...
         'Color', force_colors(ax, :), ...
         'MarkerFaceColor', 'none', ...
         'MarkerEdgeColor', force_colors(ax, :), ...
-        'MarkerSize', unified_markersize, ...
+        'MarkerSize', marker_size, ...
+        'LineWidth', line_width, ...
         'DisplayName', axis_labels{ax});
 end
 
@@ -851,15 +1034,13 @@ ax1.LineWidth = 2.5;
 ax1.Box = 'on';
 
 % Legend at top (northoutside, matching run_frequency_sweep.m style)
-if ControllerType == 2  % PI mode - include Theory curve
-    lgd = legend([plot_handles_mag; plot_handle_theory_mag], ...
-        {axis_labels{1}, axis_labels{2}, axis_labels{3}, 'Theory'}, ...
-        'Location', 'northoutside', 'NumColumns', 4, ...
-        'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
-else  % Model Based Control mode
-    lgd = legend(plot_handles_mag, 'Location', 'northoutside', 'NumColumns', 3, ...
-        'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
-end
+% Combine axis labels and theory curve labels
+theory_labels = {theory_curves_data.label};
+lgd = legend([plot_handles_mag; h_theory_mag], ...
+    [axis_labels, theory_labels], ...
+    'Location', 'northoutside', ...
+    'NumColumns', 3 + length(theory_curves_data), ...
+    'FontSize', 13, 'FontWeight', 'bold', 'Orientation', 'horizontal');
 lgd.EdgeColor = [0 0 0];  % Black border
 lgd.LineWidth = 2.0;      % Thick border
 
@@ -869,21 +1050,23 @@ lgd.LineWidth = 2.0;      % Thick border
 subplot('Position', [0.1, 0.1, 0.85, 0.35]);
 hold on; grid off;
 
-% Plot theoretical phase curve first (bottom layer) - PI mode only
-if ControllerType == 2
-    semilogx(freq_theory, phi_theory_pi, '-', ...
+% Plot all theory phase curves first (bottom layer)
+for curve_idx = 1:length(theory_curves_data)
+    semilogx(freq_theory, theory_curves_data(curve_idx).phi_deg, ...
+        theory_curves_data(curve_idx).line_style, ...
         'LineWidth', unified_linewidth, ...
         'Color', theory_color, ...
-        'DisplayName', 'Theory');
+        'DisplayName', theory_curves_data(curve_idx).label);
 end
 
-% Plot phase of excited axis only
-semilogx(frequencies, phase_lag_deg, ['--' force_markers{axis_idx}], ...
-    'LineWidth', unified_linewidth, ...
+% Plot phase of excited axis only (markers only, no connecting lines)
+semilogx(frequencies, phase_lag_deg, force_markers{axis_idx}, ...
+    'LineStyle', 'none', ...
     'Color', force_colors(axis_idx, :), ...
     'MarkerFaceColor', 'none', ...
     'MarkerEdgeColor', force_colors(axis_idx, :), ...
     'MarkerSize', unified_markersize, ...
+    'LineWidth', unified_linewidth, ...
     'DisplayName', sprintf('%s Phase', axis_labels{axis_idx}));
 
 % Labels and formatting
@@ -900,6 +1083,7 @@ ax2.FontSize = 18;
 ax2.FontWeight = 'bold';
 ax2.LineWidth = 2.5;
 ax2.Box = 'on';
+ylim([-75, 0]);  % Fixed Y-axis range for phase plot
 
 fprintf('  Bode plot generated\n');
 fprintf('\n');
@@ -967,6 +1151,7 @@ if SAVE_MAT || SAVE_PNG
         results.config.fB_e = fB_e;
         results.config.Kp_value = Kp_value;
         results.config.Ki_value = Ki_value;
+        results.config.generation_mode = generation_mode;
         results.config.pos_update_rate = pos_update_rate;
         results.config.interp_method = interp_method;
         results.config.USE_REALTIME_INTERP = USE_REALTIME_INTERP;
@@ -974,6 +1159,8 @@ if SAVE_MAT || SAVE_PNG
         results.config.skip_cycles = skip_cycles;
         results.config.fft_cycles = fft_cycles;
         results.config.Ts = Ts;
+        results.config.ff_enable = ff_enable;
+        results.config.ff_preview = ff_preview;
 
         % Data
         results.data.magnitude_ratio = magnitude_ratio;
@@ -993,15 +1180,12 @@ if SAVE_MAT || SAVE_PNG
         results.quality.dc_error = quality_dc_error;
         results.quality.dc_pass = quality_dc_pass;
 
-        % Theoretical data (PI mode only)
-        if ControllerType == 2
-            results.theory.freq = freq_theory;
-            results.theory.magnitude = A_theory_pi;
-            results.theory.phase_deg = phi_theory_pi;
-            results.theory.tau = tau;
-            results.theory.Kp = Kp_value;
-            results.theory.zc = zc;
-        end
+        % Theory data (unified structure for all controller modes)
+        results.theory.freq = freq_theory;
+        results.theory.tau_rate = tau_rate;
+        results.theory.curves = theory_curves_data;
+        results.theory.b_value = b_value;
+        results.theory.THEORY_CURVES = THEORY_CURVES;
 
         % Metadata
         results.meta.timestamp = datestr(now);

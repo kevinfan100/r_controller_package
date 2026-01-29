@@ -395,6 +395,11 @@ if run_simulink_test
         vd_params = vd_signal_params('Mode', 1, 'Channel', 1, 'Amplitude', 0, ...
             'Frequency', 100, 'Ts', 1e-5, 'ff_preview', 0);
 
+        % Control output LPF parameters (for ZOH Plant)
+        u_lpf_enable = 0;            % 0=bypass (default), 1=enable LPF
+        f_low = 10000;               % Cutoff frequency [Hz]
+        w_low = 2*pi*f_low;          % Convert to rad/s
+
         % Assign all parameters to base workspace for Simulink
         assignin('base', 'trajectory_generator_params', traj_params);
         assignin('base', 'motion_control_law_params', motion_params);
@@ -410,6 +415,11 @@ if run_simulink_test
         assignin('base', 'ControllerType', ControllerType);
         assignin('base', 'f_d_timeseries', f_d_timeseries);
         assignin('base', 'pos_m_static', pos_m_static);
+
+        % Control output LPF parameters (for ZOH Plant)
+        assignin('base', 'u_lpf_enable', u_lpf_enable);
+        assignin('base', 'f_low', f_low);
+        assignin('base', 'w_low', w_low);
 
         fprintf('Running Simulink simulation (signal_type=3, T=%.1f s)...\n', T_sim_slx);
 

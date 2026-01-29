@@ -85,6 +85,19 @@ pos_m_interp_enable = 0;
 
 pos_update_rate = 1600;         % Position update rate [Hz]
 
+% -------------------------------------------------------------------------
+% Control Output Low-Pass Filter (in ZOH Plant)
+% -------------------------------------------------------------------------
+% u_lpf_enable: Enable continuous LPF on control output (after DAC)
+%   0 = Bypass (no filtering, default)
+%   1 = Apply LPF (s-domain first-order)
+%
+% f_low: LPF cutoff frequency [Hz]
+%   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
+%
+u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
+f_low = 10000;                   % Cutoff frequency [Hz]
+
 % === Inner Loop Controller ===
 % Options: 'model_base_ctrl' or 'pi_ctrl'
 controller_type = 'model_base_ctrl';
@@ -294,6 +307,12 @@ assignin('base', 'ControllerType', ControllerType);
 assignin('base', 'f_d_timeseries', f_d_timeseries);
 assignin('base', 'pos_m_static', pos_m_static);
 assignin('base', 'delay_steps', delay_steps);
+
+% Control output LPF parameters (for ZOH Plant)
+w_low = 2*pi*f_low;              % Convert to rad/s
+assignin('base', 'u_lpf_enable', u_lpf_enable);
+assignin('base', 'f_low', f_low);
+assignin('base', 'w_low', w_low);
 
 fprintf('  Parameters assigned to base workspace\n');
 fprintf('  signal_type = %d (Motion Control mode)\n', signal_type);

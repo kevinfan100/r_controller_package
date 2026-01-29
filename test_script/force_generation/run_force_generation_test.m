@@ -71,7 +71,7 @@ force_amplitude = 5.0;          % Force amplitude [pN]
 force_offset    = 0;
 
 % Sine mode parameters
-force_frequency = 100;           % Force frequency [Hz]
+force_frequency = 50;           % Force frequency [Hz]
 force_phase = 0;                % Phase [deg]
 
 % Step mode parameters
@@ -145,6 +145,25 @@ ylabel_fontsize = 14;            % Y-axis label font size
 title_fontsize = 15;             % Title font size
 tick_fontsize = 12;              % Tick font size
 legend_fontsize = 11;            % Legend font size
+
+% ─────────────────────────────────────────────────────────────────────────
+% 1.11 Hardware Constants
+% ─────────────────────────────────────────────────────────────────────────
+% Voltage to current conversion gain (per channel)
+K_A_DIAG = [0.3618, 0.3614, 0.3536, 0.3532, 0.3573, 0.3610];
+
+% ─────────────────────────────────────────────────────────────────────────
+% 1.12 Control Output Low-Pass Filter (in ZOH Plant)
+% ─────────────────────────────────────────────────────────────────────────
+% u_lpf_enable: Enable continuous LPF on control output (after DAC)
+%   0 = Bypass (no filtering, default)
+%   1 = Apply LPF (s-domain first-order)
+%
+% f_low: LPF cutoff frequency [Hz]
+%   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
+%
+u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
+f_low = 10000;                   % Cutoff frequency [Hz]
 
 
 %%                        SECTION 2: System Initialization
@@ -317,10 +336,19 @@ if USE_SIMULINK
     assignin('base', 'Ki_value', Ki_value);
 
     % ─────────────────────────────────────────────────────────────────────
+    % Control output LPF parameters (for ZOH Plant)
+    % ─────────────────────────────────────────────────────────────────────
+    w_low = 2*pi*f_low;              % Convert to rad/s
+    assignin('base', 'u_lpf_enable', u_lpf_enable);
+    assignin('base', 'f_low', f_low);
+    assignin('base', 'w_low', w_low);
+
+    % ─────────────────────────────────────────────────────────────────────
     % Motion Control parameters (required by Simulink model even in Force mode)
     % ─────────────────────────────────────────────────────────────────────
     motion_ctrl_params = motion_control_law_params('Enable', 0);
     traj_params = trajectory_generator_params();
+    % Motion Control parameters (required by Simulink model even in Force mode)
     particle_params = particle_dynamics_params();
     thermal_params = thermal_force_params('Enable', 0);
     p0 = [0; 0; 5];
@@ -791,6 +819,84 @@ if ENABLE_PLOT
         end
 
         fprintf('  Tab 2.5: Vd Spectrum (6 channels)\n');
+
+        % ═══════════════════════════════════════════════════════════════════════
+        % Tab 2.6: Fm Spectrum (3-axis force)
+        % FFT analysis of f_m, normalized to fundamental frequency
+        % Non-excited axes use auto-scaled Y-axis to show crosstalk spectrum
+        % ═══════════════════════════════════════════════════════════════════════
+        tab_fm_spectrum = uitab(tabgroup, 'Title', 'Fm Spectrum');
+        tab_handles.fm_spectrum = tab_fm_spectrum;
+
+        % Use steady-state data for FFT
+        fm_steady = f_m(idx_start:end, :);
+        N_fft_fm = size(fm_steady, 1);
+
+        % Compute FFT for each axis
+        freq_axis_fm = (0:N_fft_fm-1) * fs / N_fft_fm;
+        half_N_fm = floor(N_fft_fm / 2);
+        freq_half_fm = freq_axis_fm(1:half_N_fm);
+
+        % Find fundamental frequency bin
+        [~, fund_idx_fm] = min(abs(freq_half_fm - force_frequency));
+
+        % Determine excited axis (largest component in force_direction)
+        [~, excited_axis] = max(abs(force_direction));
+
+        % Create 3x1 layout
+        tl_fm_spectrum = tiledlayout(tab_fm_spectrum, 3, 1, 'Padding', 'compact', 'TileSpacing', 'compact');
+        title(tl_fm_spectrum, 'Fm Spectrum (Force)', 'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+        axis_labels_force = {'Fx', 'Fy', 'Fz'};
+        for ax_idx = 1:3
+            ax = nexttile(tl_fm_spectrum);
+
+            % Compute FFT magnitude
+            Y_fm = fft(fm_steady(:, ax_idx));
+            mag_fm = abs(Y_fm(1:half_N_fm)) / N_fft_fm * 2;  % Single-sided amplitude
+
+            % Get fundamental amplitude (in pN)
+            fund_amp_pN = mag_fm(fund_idx_fm);
+
+            % Compute THD (harmonics 2-10)
+            thd_sum_sq = 0;
+            for h = 2:10
+                harm_freq = h * force_frequency;
+                [~, harm_idx] = min(abs(freq_half_fm - harm_freq));
+                if harm_idx <= half_N_fm
+                    thd_sum_sq = thd_sum_sq + mag_fm(harm_idx)^2;
+                end
+            end
+            thd_pct = sqrt(thd_sum_sq) / fund_amp_pN * 100;
+
+            if ax_idx == excited_axis
+                % Excited axis: normalize to fundamental, fixed Y-axis
+                mag_norm_fm = mag_fm / fund_amp_pN;
+                plot(ax, freq_half_fm, mag_norm_fm, 'k-', 'LineWidth', 1.5);
+                set(ax, 'XScale', 'log');
+                xlim(ax, [10, 10000]);
+                ylim(ax, [0, 1.1]);
+                title(ax, sprintf('%s (%.3f pN, THD=%.2f%%)', axis_labels_force{ax_idx}, fund_amp_pN, thd_pct), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            else
+                % Non-excited axis: show absolute amplitude in pN, auto Y-axis
+                plot(ax, freq_half_fm, mag_fm, 'k-', 'LineWidth', 1.5);
+                set(ax, 'XScale', 'log');
+                xlim(ax, [10, 10000]);
+                % Auto Y-axis for visibility
+                ylabel(ax, '[pN]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('%s (%.4f pN, THD=%.2f%%)', axis_labels_force{ax_idx}, fund_amp_pN, thd_pct), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+            end
+
+            xlabel(ax, 'Frequency [Hz]', 'FontSize', xlabel_fontsize);
+            ax.FontSize = tick_fontsize;
+            ax.LineWidth = axis_linewidth;
+            grid(ax, 'on');
+            box(ax, 'on');
+        end
+
+        fprintf('  Tab 2.6: Fm Spectrum (3 axes)\n');
     end
 
     % ═══════════════════════════════════════════════════════════════════════
@@ -1007,13 +1113,16 @@ if ENABLE_PLOT
         % Resample u_data to match t if needed
         N_u = size(u_data_raw, 1);
         if N_u ~= N
-            u_data = zeros(N, 6);
+            u_data_voltage = zeros(N, 6);
             for ch = 1:6
-                u_data(:, ch) = interp1(t_u, u_data_raw(:, ch), t, 'linear', 'extrap');
+                u_data_voltage(:, ch) = interp1(t_u, u_data_raw(:, ch), t, 'linear', 'extrap');
             end
         else
-            u_data = u_data_raw;
+            u_data_voltage = u_data_raw;
         end
+
+        % Convert voltage to current using K_A_DIAG
+        u_data = u_data_voltage .* K_A_DIAG;  % Now in Amperes
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
         if ControllerType == 1
@@ -1021,24 +1130,93 @@ if ENABLE_PLOT
         else
             ctrl_param_str = sprintf('PI-Controller (Kp=%.1f, Ki=%.1f)', Kp_value, Ki_value);
         end
-        title(tl5, sprintf('Control Input u - %s', ctrl_param_str), ...
+        title(tl5, sprintf('Control Input u (Current) - %s', ctrl_param_str), ...
             'FontWeight', 'bold', 'FontSize', title_fontsize);
 
         for ch = 1:6
             ax = nexttile(tl5);
-            plot(ax, t(idx_display:end)*1000, u_data(idx_display:end, ch), ...
+            % Display in A (Amperes)
+            u_display = u_data(idx_display:end, ch);
+            plot(ax, t(idx_display:end)*1000, u_display, ...
                 'Color', colors(ch,:), 'LineWidth', measurement_linewidth);
             xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
-            ylabel(ax, 'u [V]', 'FontSize', ylabel_fontsize);
-            title(ax, sprintf('P%d (Range: %.3f ~ %.3f)', ch, ...
-                min(u_data(idx_display:end, ch)), max(u_data(idx_display:end, ch))), ...
+            ylabel(ax, 'u [A]', 'FontSize', ylabel_fontsize);
+            title(ax, sprintf('P%d (Range: %.4f ~ %.4f A)', ch, ...
+                min(u_display), max(u_display)), ...
                 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
             ax.FontSize = tick_fontsize;
             ax.LineWidth = axis_linewidth;
             grid(ax, 'on');
             box(ax, 'on');
         end
-        fprintf('  Tab 5: Control Input (u)\n');
+        fprintf('  Tab 5: Control Input (u) - Current [A]\n');
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 5.5: u Spectrum (6-channel current)
+        % FFT analysis of control input current, normalized to fundamental
+        % Only for sine mode
+        % ───────────────────────────────────────────────────────────────────
+        if strcmpi(signal_type_original, 'sine')
+            tab_u_spectrum = uitab(tabgroup, 'Title', 'u Spectrum');
+            tab_handles.u_spectrum = tab_u_spectrum;
+
+            % Use steady-state data for FFT (u_data is already in Amperes)
+            u_steady = u_data(idx_start:end, :);
+            N_fft_u = size(u_steady, 1);
+            fs_u = 1 / Ts;  % 100 kHz sampling rate
+
+            % Compute FFT parameters
+            freq_axis_u = (0:N_fft_u-1) * fs_u / N_fft_u;
+            half_N_u = floor(N_fft_u / 2);
+            freq_half_u = freq_axis_u(1:half_N_u);
+
+            % Find fundamental frequency bin
+            [~, fund_idx_u] = min(abs(freq_half_u - force_frequency));
+
+            % Create 2x3 layout
+            tl_u_spectrum = tiledlayout(tab_u_spectrum, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl_u_spectrum, 'u Spectrum (Current)', 'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            for ch = 1:6
+                ax = nexttile(tl_u_spectrum);
+
+                % Compute FFT magnitude
+                Y_u = fft(u_steady(:, ch));
+                mag_u = abs(Y_u(1:half_N_u)) / N_fft_u * 2;  % Single-sided amplitude [A]
+
+                % Get fundamental amplitude (in A)
+                fund_amp_A = mag_u(fund_idx_u);
+
+                % Normalize to fundamental
+                if fund_amp_A > 1e-6  % Avoid division by zero
+                    mag_norm_u = mag_u / fund_amp_A;
+                else
+                    mag_norm_u = mag_u;  % Just show raw if no fundamental
+                end
+
+                % Plot with channel color, log X axis
+                plot(ax, freq_half_u, mag_norm_u, 'Color', colors(ch,:), 'LineWidth', 1.5);
+
+                % Set log scale and limits (extend to 20kHz)
+                set(ax, 'XScale', 'log');
+                xlim(ax, [10, 20000]);
+                ylim(ax, [0, 1.1]);
+
+                % Labels
+                xlabel(ax, 'Frequency [Hz]', 'FontSize', xlabel_fontsize);
+
+                % Title with channel and fundamental amplitude in A
+                title(ax, sprintf('P%d (%.4f A)', ch, fund_amp_A), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+
+            fprintf('  Tab 5.5: u Spectrum (6 channels) - Current [A]\n');
+        end
 
         % ───────────────────────────────────────────────────────────────────
         % Tab 6: Vm vs Vd Tracking (Lissajous-style plot)
@@ -1463,6 +1641,13 @@ if SAVE_MAT || SAVE_PNG
                     exportgraphics(tab_spectrum, fullfile(test_dir, 'tab2_5_vd_spectrum.png'), 'Resolution', export_resolution);
                 end
 
+                % Tab 2.6: Fm Spectrum (only for sine mode)
+                if strcmpi(signal_type_original, 'sine') && isfield(tab_handles, 'fm_spectrum')
+                    tabgroup.SelectedTab = tab_fm_spectrum;
+                    drawnow; pause(0.1);
+                    exportgraphics(tab_fm_spectrum, fullfile(test_dir, 'tab2_6_fm_spectrum.png'), 'Resolution', export_resolution);
+                end
+
                 % Tab 3: Error Analysis
                 tabgroup.SelectedTab = tab3;
                 drawnow; pause(0.1);
@@ -1470,7 +1655,7 @@ if SAVE_MAT || SAVE_PNG
 
                 tab_count = 3;
                 if strcmpi(signal_type_original, 'sine')
-                    tab_count = tab_count + 1;  % Vd Spectrum
+                    tab_count = tab_count + 2;  % Vd Spectrum + Fm Spectrum
                 end
 
                 % Additional tabs for Simulink mode
@@ -1484,6 +1669,13 @@ if SAVE_MAT || SAVE_PNG
                     tabgroup.SelectedTab = tab5;
                     drawnow; pause(0.1);
                     exportgraphics(tab5, fullfile(test_dir, 'tab5_control_input.png'), 'Resolution', export_resolution);
+
+                    % Tab 5.5: u Spectrum (only for sine mode)
+                    if strcmpi(signal_type_original, 'sine') && isfield(tab_handles, 'u_spectrum')
+                        tabgroup.SelectedTab = tab_u_spectrum;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_u_spectrum, fullfile(test_dir, 'tab5_5_u_spectrum.png'), 'Resolution', export_resolution);
+                    end
 
                     % Tab 6: vd vs vm Tracking
                     tabgroup.SelectedTab = tab6;
@@ -1506,6 +1698,9 @@ if SAVE_MAT || SAVE_PNG
                     exportgraphics(tab9, fullfile(test_dir, 'tab9_fm_vs_fd_interp_delayed.png'), 'Resolution', export_resolution);
 
                     tab_count = 9;
+                    if strcmpi(signal_type_original, 'sine')
+                        tab_count = tab_count + 1;  % u Spectrum
+                    end
                 else
                     % Ideal Tracking mode: Tab 4 (fd vs fm)
                     tabgroup.SelectedTab = tab4;
