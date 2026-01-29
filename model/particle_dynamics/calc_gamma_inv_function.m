@@ -45,10 +45,21 @@ function [Gamma_inv, h_bar] = calc_gamma_inv_function(p, params)
 %#codegen
 
     % Extract parameters
+    gamma_N = params.gamma_N;
+    wall_effect_enable = params.wall_effect_enable;
+
+    % Check if wall effect is disabled
+    if wall_effect_enable < 0.5
+        % No wall effect: isotropic mobility
+        Gamma_inv = eye(3) / gamma_N;
+        h_bar = 1000;  % Placeholder (far from wall)
+        return;
+    end
+
+    % Wall effect enabled: anisotropic mobility
     w_hat = params.w_hat;
     pz = params.pz;
     R = params.R;
-    gamma_N = params.gamma_N;
 
     % Calculate distance from wall
     % h = (p . w_hat) - pz (signed distance along wall normal)
