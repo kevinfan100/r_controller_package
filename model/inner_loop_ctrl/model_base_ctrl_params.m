@@ -10,30 +10,51 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
 %   fB_f - Feedforward bandwidth [Hz]
 %
 % Optional Parameters (Name-Value pairs):
-%   'ff_enable' - Enable feedforward filter (default: true)
-%                 true  = Use feedforward filter (ZPETC)
-%                 false = Bypass feedforward (vf = vd)
+%   'ff_enable'  - Enable feedforward filter (default: true)
+%                  true  = Use feedforward filter (ZPETC)
+%                  false = Bypass feedforward (vf = vd)
+%   'lpf_enable' - Enable LPF mode for 3rd-order controller (default: false)
+%                  false = Use original 2nd-order controller
+%                  true  = Use 3rd-order controller with LPF
+%   'f_low'      - LPF cutoff frequency [Hz] (required when lpf_enable=true)
+%                  Typical values: 5000, 10000, 20000 Hz
 %
 % Output:
 %   ctrl_params - Simulink.Parameter object with Bus type
 %
 % Example:
-%   % Default: feedforward enabled
+%   % Default: feedforward enabled, LPF disabled (backward compatible)
 %   ctrl_params = model_base_ctrl_params(300, 500, 1000);
 %
 %   % Disable feedforward for pure feedback control
 %   ctrl_params = model_base_ctrl_params(300, 500, 1000, 'ff_enable', false);
 %
+%   % Enable LPF mode with 10 kHz cutoff
+%   ctrl_params = model_base_ctrl_params(500, 2500, 3000, ...
+%       'lpf_enable', true, 'f_low', 10000);
+%
 % Note: This function creates 'ModelBaseCtrlParamsBus' in base workspace
 %
-% See also: model_base_ctrl_function, CLAUDE.md
+% See also: model_base_ctrl_function, lpf_system_params, CLAUDE.md
 
     %% Parse Optional Parameters
     p = inputParser;
     addParameter(p, 'ff_enable', true, @(x) islogical(x) || isnumeric(x));
+    addParameter(p, 'lpf_enable', false, @(x) islogical(x) || isnumeric(x));
+    addParameter(p, 'f_low', 10000, @(x) isnumeric(x) && x > 0);
     parse(p, varargin{:});
 
     ff_enable = logical(p.Results.ff_enable);
+    lpf_enable = logical(p.Results.lpf_enable);
+    f_low = p.Results.f_low;
+
+    %% Validate LPF Parameters
+    if lpf_enable
+        if f_low < 1000 || f_low > 50000
+            warning('model_base_ctrl_params:UnusualFrequency', ...
+                'f_low=%.0f Hz is outside recommended range [1000, 50000] Hz', f_low);
+        end
+    end
 
     %% System Constants
     params.k_o = 5.6695e-4;              % Plant gain from H(z^-1)
@@ -104,6 +125,41 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
     %% Feedforward Enable Flag
     % ff_enable: 1.0 = feedforward enabled (ZPETC), 0.0 = feedforward bypassed
     params.ff_enable = double(ff_enable);
+
+    %% LPF Mode Parameters
+    % lpf_enable: 1.0 = 3rd-order controller with LPF, 0.0 = 2nd-order (original)
+    params.lpf_enable = double(lpf_enable);
+    params.f_low = f_low;
+
+    if lpf_enable
+        % Calculate 3rd-order system parameters using lpf_system_params
+        lpf_sys = lpf_system_params(f_low, 'Ts', params.T);
+
+        % Store LPF-specific parameters
+        params.k_o_lpf = lpf_sys.k_o_lpf;    % 3rd-order system gain
+        params.bu = lpf_sys.bu;              % Non-minimum phase zero (≈3.16)
+        params.ba = lpf_sys.ba;              % Minimum phase zero (≈0.22)
+        params.p3 = lpf_sys.p3;              % LPF pole (≈0.53)
+        params.a3 = lpf_sys.a3;              % 3rd pole coefficient
+
+        % Recalculate control gain for 3rd-order system
+        params.ku_lpf = kc / params.k_o_lpf;
+
+        % LPF mode feedforward coefficients (ZPETC - only cancel minimum phase zero ba)
+        % vf[k] = λf*vf[k-1] + kff_lpf{ba*vd[k] + (1-ba*λc)*vd[k-1] - λc*vd[k-2]}
+        params.kff_lpf = (1 - lambda_f) / ((1 + params.ba) * (1 - lambda_c));
+        params.one_S_ba_M_lambda_c = 1 - params.ba * lambda_c;  % (1 - ba·λc)
+    else
+        % Default values when LPF disabled (not used, but Bus requires them)
+        params.k_o_lpf = params.k_o;
+        params.bu = 0;
+        params.ba = params.b;  % Use original zero for consistency
+        params.p3 = 0;
+        params.a3 = 0;
+        params.ku_lpf = params.ku;
+        params.kff_lpf = params.kff;
+        params.one_S_ba_M_lambda_c = params.one_S_b_M_lambda_c;
+    end
 
     %% Control Law Coefficients
     % ku, a1, a2, one_S_bc, bc already defined above
@@ -202,6 +258,47 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
     elems(22) = Simulink.BusElement;
     elems(22).Name = 'ff_enable';
     elems(22).DataType = 'double';
+
+    % LPF mode parameters (elements 23-32)
+    elems(23) = Simulink.BusElement;
+    elems(23).Name = 'lpf_enable';
+    elems(23).DataType = 'double';
+
+    elems(24) = Simulink.BusElement;
+    elems(24).Name = 'f_low';
+    elems(24).DataType = 'double';
+
+    elems(25) = Simulink.BusElement;
+    elems(25).Name = 'k_o_lpf';
+    elems(25).DataType = 'double';
+
+    elems(26) = Simulink.BusElement;
+    elems(26).Name = 'bu';
+    elems(26).DataType = 'double';
+
+    elems(27) = Simulink.BusElement;
+    elems(27).Name = 'ba';
+    elems(27).DataType = 'double';
+
+    elems(28) = Simulink.BusElement;
+    elems(28).Name = 'p3';
+    elems(28).DataType = 'double';
+
+    elems(29) = Simulink.BusElement;
+    elems(29).Name = 'a3';
+    elems(29).DataType = 'double';
+
+    elems(30) = Simulink.BusElement;
+    elems(30).Name = 'ku_lpf';
+    elems(30).DataType = 'double';
+
+    elems(31) = Simulink.BusElement;
+    elems(31).Name = 'kff_lpf';
+    elems(31).DataType = 'double';
+
+    elems(32) = Simulink.BusElement;
+    elems(32).Name = 'one_S_ba_M_lambda_c';
+    elems(32).DataType = 'double';
 
     % Assign elements to bus
     ModelBaseCtrlParamsBus.Elements = elems;
