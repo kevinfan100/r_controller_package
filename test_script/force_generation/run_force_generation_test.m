@@ -61,6 +61,19 @@ ff_enable = true;                       % Enable feedforward filter
 ff_preview = 0;                         % Preview steps: 0 or 2
 
 % ─────────────────────────────────────────────────────────────────────────
+% 1.2.2 LPF Configuration
+% ─────────────────────────────────────────────────────────────────────────
+% lpf_enable: Enable LPF mode (3rd-order controller)
+%   false = Use original 2nd-order controller, Simulink LPF bypassed
+%   true  = Use new 3rd-order controller, Simulink LPF enabled
+%
+% f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
+%   Typical values: 5000, 10000, 20000 Hz
+%
+lpf_enable = false;                     % Default: disabled for backward compatibility
+f_low = 10000;                          % Default: 10 kHz
+
+% ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
 % ─────────────────────────────────────────────────────────────────────────
 signal_type = 'sine';           % 'sine' or 'step'
@@ -155,15 +168,15 @@ K_A_DIAG = [0.3618, 0.3614, 0.3536, 0.3532, 0.3573, 0.3610];
 % ─────────────────────────────────────────────────────────────────────────
 % 1.12 Control Output Low-Pass Filter (in ZOH Plant)
 % ─────────────────────────────────────────────────────────────────────────
-% u_lpf_enable: Enable continuous LPF on control output (after DAC)
-%   0 = Bypass (no filtering, default)
-%   1 = Apply LPF (s-domain first-order)
+% u_lpf_enable: Simulink LPF switch - automatically linked to lpf_enable
+%   When lpf_enable=false: u_lpf_enable=0 (Simulink LPF bypassed)
+%   When lpf_enable=true:  u_lpf_enable=1 (Simulink LPF enabled)
 %
-% f_low: LPF cutoff frequency [Hz]
+% f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
-f_low = 10000;                   % Cutoff frequency [Hz]
+u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% f_low is already set in LPF Configuration section (1.2.2)
 
 
 %%                        SECTION 2: System Initialization
@@ -181,8 +194,10 @@ end
 % Set ControllerType for Simulink (1=Model Based Control, 2=PI-Controller)
 if strcmpi(controller_type, 'model_base_ctrl')
     ControllerType = 1;
-    % Generate controller label with feedforward mode
-    if ~ff_enable
+    % Generate controller label with feedforward/LPF mode
+    if lpf_enable
+        controller_label = sprintf('Model Based Control (LPF f_low=%d Hz)', f_low);
+    elseif ~ff_enable
         controller_label = 'Model Based Control (No FF)';
     elseif ff_preview == 0
         controller_label = 'Model Based Control (ZPETC d=0)';
@@ -212,8 +227,11 @@ alloc_params_sim = force_model_allocation_params('Simulink', true, ...
 % For offline analysis (not used by Simulink, but kept for compatibility)
 inv_params = force_model_allocation_params();
 
-% Load Model Based Control parameters (with ff_enable setting)
-model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
+% Load Model Based Control parameters (with ff_enable and lpf_enable settings)
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+    'ff_enable', ff_enable, ...
+    'lpf_enable', lpf_enable, ...
+    'f_low', f_low);
 
 % System constants
 Ts = 1e-5;                      % Sampling time [s] (100 kHz)

@@ -58,6 +58,19 @@ ff_enable = true;                        % Enable feedforward filter
 ff_preview = 0;                         % Preview steps: 0 or 2
 
 % -------------------------------------------------------------------------
+% 1.1.1a LPF Configuration
+% -------------------------------------------------------------------------
+% lpf_enable: Enable LPF mode (3rd-order controller)
+%   false = Use original 2nd-order controller, Simulink LPF bypassed
+%   true  = Use new 3rd-order controller, Simulink LPF enabled
+%
+% f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
+%   Typical values: 5000, 10000, 20000 Hz
+%
+lpf_enable = false;                     % Default: disabled for backward compatibility
+f_low = 10000;                          % Default: 10 kHz
+
+% -------------------------------------------------------------------------
 % 1.1.2 Theory Curves Configuration (for Bode plot)
 % -------------------------------------------------------------------------
 % Select which theory curves to display
@@ -190,15 +203,15 @@ marker_size = 8;
 % -------------------------------------------------------------------------
 % 1.14 Control Output Low-Pass Filter (in ZOH Plant)
 % -------------------------------------------------------------------------
-% u_lpf_enable: Enable continuous LPF on control output (after DAC)
-%   0 = Bypass (no filtering, default)
-%   1 = Apply LPF (s-domain first-order)
+% u_lpf_enable: Simulink LPF switch - automatically linked to lpf_enable
+%   When lpf_enable=false: u_lpf_enable=0 (Simulink LPF bypassed)
+%   When lpf_enable=true:  u_lpf_enable=1 (Simulink LPF enabled)
 %
-% f_low: LPF cutoff frequency [Hz]
+% f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = 0;                % 0=bypass (default), 1=enable LPF
-f_low = 10000;                   % Cutoff frequency [Hz]
+u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% f_low is already set in LPF Configuration section (1.1.1a)
 
 
 %% ========================================================================
@@ -235,7 +248,13 @@ end
 
 % Auto-select theory curves based on controller configuration
 if ControllerType == 1  % Model Based Control
-    if ~ff_enable
+    if lpf_enable
+        % LPF mode: use 3rd-order ZPETC theory curve
+        THEORY_CURVES = {'zpetc_lpf_d0'};
+        if SHOW_COMPARISON_CURVES
+            THEORY_CURVES = [THEORY_CURVES, {'zpetc_d0', 'no_ff'}];
+        end
+    elseif ~ff_enable
         THEORY_CURVES = {'no_ff'};
         if SHOW_COMPARISON_CURVES
             THEORY_CURVES = [THEORY_CURVES, {'zpetc_d0', 'pi'}];
@@ -266,8 +285,11 @@ inv_params = force_model_allocation_params();
 alloc_params_sim = force_model_allocation_params('Simulink', true, ...
     'pos_m', bead_position, 'SampleRateMode', 2);  % Linear interpolation
 
-% Load Model Based Control parameters (with ff_enable setting)
-model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, 'ff_enable', ff_enable);
+% Load Model Based Control parameters (with ff_enable and lpf_enable settings)
+model_base_ctrl_params_local = model_base_ctrl_params(fB_c, fB_e, fB_f, ...
+    'ff_enable', ff_enable, ...
+    'lpf_enable', lpf_enable, ...
+    'f_low', f_low);
 
 % Set force direction vector based on axis selection
 switch upper(force_axis)
