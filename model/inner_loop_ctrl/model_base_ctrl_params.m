@@ -148,13 +148,65 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
         params.a2 = lpf_sys.a2;              % 3rd-order: ≈-1.97
         params.a3 = lpf_sys.a3;              % 3rd-order: ≈0.50
 
-        % Recalculate control gain for 3rd-order system
-        params.ku_lpf = kc / params.k_o_lpf;
+        % ============================================================
+        % LPF Mode: Recalculate kc, bc using bu (NOT b!)
+        % Reference: FluxControl_LowPassFiltering.pdf Page 1
+        % ============================================================
+        kc_lpf = (1 - lambda_c) / (1 + params.bu);
+        bc_lpf = params.bu * kc_lpf;
+        params.kc_lpf = kc_lpf;
+        params.bc_lpf = bc_lpf;
 
-        % LPF mode feedforward coefficients (ZPETC - only cancel minimum phase zero ba)
-        % vf[k] = λf*vf[k-1] + kff_lpf{ba*vd[k] + (1-ba*λc)*vd[k-1] - λc*vd[k-2]}
-        params.kff_lpf = (1 - lambda_f) / ((1 + params.ba) * (1 - lambda_c));
-        params.one_S_ba_M_lambda_c = 1 - params.ba * lambda_c;  % (1 - ba·λc)
+        % Recalculate control gain for 3rd-order system
+        % ku = kc / k_o, where kc must use bu
+        params.ku_lpf = kc_lpf / params.k_o_lpf;
+
+        % LPF mode feedforward coefficients
+        % Reference: FluxControl_LowPassFiltering.pdf Page 2
+        % vf[k] = kff{bu*vd[k] + (1-bu*λc)*vd[k-1] - λc*vd[k-2]}
+        % NOTE: Use bu (NOT ba!) for feedforward
+        params.kff_lpf = (1 - lambda_f) / ((1 + params.bu) * (1 - lambda_c));
+        params.one_S_bu_M_lambda_c = 1 - params.bu * lambda_c;  % (1 - bu·λc)
+
+        % δvf coefficients for LPF mode
+        % δvf[k] = vf[k] - (λc + kc_lpf)*vf[k-1] - bc_lpf*vf[k-2]
+        params.lambda_c_A_kc_lpf = lambda_c + kc_lpf;
+
+        % ============================================================
+        % LPF Mode: Recalculate Estimator Gains L2, L3 using bu
+        % Reference: FluxControl_LowPassFiltering.pdf Page 3
+        % ============================================================
+        % L1 is the same (doesn't contain b or bu)
+        params.L1_lpf = lambda_c + (1 + beta) - 3*lambda_e;
+
+        % L2 = [bu(λe-1)³ - β(bu+1)(β²-3βλe+β+3λe²-3λe+1)] / [kc(bu+1)(bu+β)]
+        params.L2_lpf = (params.bu*(lambda_e - 1)^3 - ...
+                     beta*(params.bu + 1)*(beta^2 - 3*beta*lambda_e + beta + ...
+                     3*lambda_e^2 - 3*lambda_e + 1)) / ...
+                    (kc_lpf * (params.bu + 1) * (params.bu + beta));
+
+        % L3 = -[β + bu + β·bu - 3βλe - 3bu·λe + β²·bu + 3bu·λe² + β² + λe³ - 3β·bu·λe]
+        %      / [kc(bu+1)(bu+β)]
+        params.L3_lpf = -(beta + params.bu + beta*params.bu - 3*beta*lambda_e - ...
+                      3*params.bu*lambda_e + params.bu*beta^2 + ...
+                      3*params.bu*lambda_e^2 + beta^2 + lambda_e^3 - ...
+                      3*beta*params.bu*lambda_e) / ...
+                     (kc_lpf * (params.bu + 1) * (params.bu + beta));
+
+        % ============================================================
+        % LPF Mode: Control Law Denominator Coefficients (d=0)
+        % Reference: FluxControl_LowPassFiltering.pdf Page 1, 4
+        % ============================================================
+        % b1 = λc - ba
+        % b_{1} = kc_lpf  (when d=0)
+        % b2 = ba * λc
+        % b_{2} = bc_lpf + ba * kc_lpf
+        % b_{3} = ba * bc_lpf
+        %
+        % uc[k] = (b1+b_{1})*uc[k-1] + (b2+b_{2})*uc[k-2] + b_{3}*uc[k-3] + ...
+        params.uc_coef_k1 = (lambda_c - params.ba) + kc_lpf;  % λc - ba + kc_lpf
+        params.uc_coef_k2 = params.ba * lambda_c + bc_lpf + params.ba * kc_lpf;
+        params.uc_coef_k3 = params.ba * bc_lpf;
     else
         % Default values when LPF disabled (not used, but Bus requires them)
         params.k_o_lpf = params.k_o;
@@ -162,9 +214,18 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
         params.ba = params.b;  % Use original zero for consistency
         params.p3 = 0;
         params.a3 = 0;
+        params.kc_lpf = kc;
+        params.bc_lpf = bc;
         params.ku_lpf = params.ku;
         params.kff_lpf = params.kff;
-        params.one_S_ba_M_lambda_c = params.one_S_b_M_lambda_c;
+        params.one_S_bu_M_lambda_c = params.one_S_b_M_lambda_c;
+        params.lambda_c_A_kc_lpf = params.lambda_c_A_kc;
+        params.L1_lpf = params.L1;
+        params.L2_lpf = params.L2;
+        params.L3_lpf = params.L3;
+        params.uc_coef_k1 = lambda_c + kc;  % Same as 2nd-order
+        params.uc_coef_k2 = bc;
+        params.uc_coef_k3 = 0;
     end
 
     %% Control Law Coefficients
@@ -294,17 +355,55 @@ function ctrl_params = model_base_ctrl_params(fB_c, fB_e, fB_f, varargin)
     elems(29).Name = 'a3';
     elems(29).DataType = 'double';
 
+    % LPF mode parameters (elements 30-41)
+    % Order must match struct field assignment order exactly!
     elems(30) = Simulink.BusElement;
-    elems(30).Name = 'ku_lpf';
+    elems(30).Name = 'kc_lpf';
     elems(30).DataType = 'double';
 
     elems(31) = Simulink.BusElement;
-    elems(31).Name = 'kff_lpf';
+    elems(31).Name = 'bc_lpf';
     elems(31).DataType = 'double';
 
     elems(32) = Simulink.BusElement;
-    elems(32).Name = 'one_S_ba_M_lambda_c';
+    elems(32).Name = 'ku_lpf';
     elems(32).DataType = 'double';
+
+    elems(33) = Simulink.BusElement;
+    elems(33).Name = 'kff_lpf';
+    elems(33).DataType = 'double';
+
+    elems(34) = Simulink.BusElement;
+    elems(34).Name = 'one_S_bu_M_lambda_c';
+    elems(34).DataType = 'double';
+
+    elems(35) = Simulink.BusElement;
+    elems(35).Name = 'lambda_c_A_kc_lpf';
+    elems(35).DataType = 'double';
+
+    elems(36) = Simulink.BusElement;
+    elems(36).Name = 'L1_lpf';
+    elems(36).DataType = 'double';
+
+    elems(37) = Simulink.BusElement;
+    elems(37).Name = 'L2_lpf';
+    elems(37).DataType = 'double';
+
+    elems(38) = Simulink.BusElement;
+    elems(38).Name = 'L3_lpf';
+    elems(38).DataType = 'double';
+
+    elems(39) = Simulink.BusElement;
+    elems(39).Name = 'uc_coef_k1';
+    elems(39).DataType = 'double';
+
+    elems(40) = Simulink.BusElement;
+    elems(40).Name = 'uc_coef_k2';
+    elems(40).DataType = 'double';
+
+    elems(41) = Simulink.BusElement;
+    elems(41).Name = 'uc_coef_k3';
+    elems(41).DataType = 'double';
 
     % Assign elements to bus
     ModelBaseCtrlParamsBus.Elements = elems;
