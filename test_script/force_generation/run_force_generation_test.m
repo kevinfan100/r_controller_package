@@ -70,7 +70,7 @@ ff_preview = 0;                         % Preview steps: 0 or 2
 % f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
 %   Typical values: 5000, 10000, 20000 Hz
 %
-lpf_enable = false;                     % Default: disabled for backward compatibility
+lpf_enable = true;                      % Enable LPF mode (3rd-order controller)
 f_low = 10000;                          % Default: 10 kHz
 
 % ─────────────────────────────────────────────────────────────────────────
@@ -122,9 +122,10 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ide
 % ─────────────────────────────────────────────────────────────────────────
 % 1.6 Model Based Control Parameters
 % ─────────────────────────────────────────────────────────────────────────
+% Note: When lpf_enable=true, use conservative bandwidths (fB_c=500, fB_e=2500)
 fB_f = 1000;                    % Feedforward bandwidth [Hz]
-fB_c = 3200;                    % Controller bandwidth [Hz]
-fB_e = 16000;                    % Estimator bandwidth [Hz]
+fB_c = 2500;                     % Controller bandwidth [Hz]
+fB_e = 12500;                    % Estimator bandwidth [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.7 PI Controller Parameters
@@ -1110,6 +1111,10 @@ if ENABLE_PLOT
             u_ts = simOut.get('u_pi');
         end
 
+        % Extract u_lpf (filtered control effort) if available
+        u_lpf_ts = simOut.get('u_lpf');
+        has_u_lpf = ~isempty(u_lpf_ts);
+
         % Handle timeseries or array format
         if isa(u_ts, 'timeseries')
             u_data_raw = u_ts.Data;
@@ -1142,6 +1147,38 @@ if ENABLE_PLOT
         % Convert voltage to current using K_A_DIAG
         u_data = u_data_voltage .* K_A_DIAG;  % Now in Amperes
 
+        % Process u_lpf (filtered control effort) if available
+        if has_u_lpf
+            if isa(u_lpf_ts, 'timeseries')
+                u_lpf_raw = u_lpf_ts.Data;
+                t_u_lpf = u_lpf_ts.Time;
+            else
+                u_lpf_raw = u_lpf_ts;
+                t_u_lpf = (0:size(u_lpf_raw, 1)-1)' * Ts;
+            end
+
+            % Ensure 6 columns
+            if size(u_lpf_raw, 2) < 6
+                u_lpf_padded = zeros(size(u_lpf_raw, 1), 6);
+                u_lpf_padded(:, 1:size(u_lpf_raw, 2)) = u_lpf_raw;
+                u_lpf_raw = u_lpf_padded;
+            end
+
+            % Resample to match t
+            N_u_lpf = size(u_lpf_raw, 1);
+            if N_u_lpf ~= N
+                u_lpf_voltage = zeros(N, 6);
+                for ch = 1:6
+                    u_lpf_voltage(:, ch) = interp1(t_u_lpf, u_lpf_raw(:, ch), t, 'linear', 'extrap');
+                end
+            else
+                u_lpf_voltage = u_lpf_raw;
+            end
+
+            % Convert to current
+            u_lpf_data = u_lpf_voltage .* K_A_DIAG;  % Now in Amperes
+        end
+
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
         if ControllerType == 1
             ctrl_param_str = sprintf('Model Based Control (fB: f=%d, c=%d, e=%d Hz)', fB_f, fB_c, fB_e);
@@ -1168,6 +1205,37 @@ if ENABLE_PLOT
             box(ax, 'on');
         end
         fprintf('  Tab 5: Control Input (u) - Current [A]\n');
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 5.1: Control Input (u_lpf) - After LPF
+        % Time-domain plot of filtered control current
+        % Only available when LPF is enabled
+        % ───────────────────────────────────────────────────────────────────
+        if has_u_lpf && lpf_enable
+            tab5_1 = uitab(tabgroup, 'Title', 'Control Input (u_lpf)');
+            tab_handles.control_input_lpf = tab5_1;
+
+            tl5_1 = tiledlayout(tab5_1, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl5_1, sprintf('Control Input u_{lpf} (After LPF, f_{low}=%d Hz)', f_low), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            for ch = 1:6
+                ax = nexttile(tl5_1);
+                u_lpf_display = u_lpf_data(idx_display:end, ch);
+                plot(ax, t(idx_display:end)*1000, u_lpf_display, ...
+                    'Color', colors(ch,:), 'LineWidth', measurement_linewidth);
+                xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, 'u_{lpf} [A]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('P%d (Range: %.4f ~ %.4f A)', ch, ...
+                    min(u_lpf_display), max(u_lpf_display)), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+            fprintf('  Tab 5.1: Control Input (u_lpf) - After LPF [A]\n');
+        end
 
         % ───────────────────────────────────────────────────────────────────
         % Tab 5.5: u Spectrum (6-channel current)
@@ -1234,6 +1302,140 @@ if ENABLE_PLOT
             end
 
             fprintf('  Tab 5.5: u Spectrum (6 channels) - Current [A]\n');
+        end
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 5.6: u_lpf Spectrum (Filtered Control Effort)
+        % Shows the spectrum of control effort AFTER the LPF
+        % Only available when LPF is enabled and u_lpf signal exists
+        % ───────────────────────────────────────────────────────────────────
+        if strcmpi(signal_type_original, 'sine') && has_u_lpf && lpf_enable
+            tab_u_lpf_spectrum = uitab(tabgroup, 'Title', 'u_lpf Spectrum');
+            tab_handles.u_lpf_spectrum = tab_u_lpf_spectrum;
+
+            % Use steady-state data for FFT
+            u_lpf_steady = u_lpf_data(idx_start:end, :);
+            N_fft_lpf = size(u_lpf_steady, 1);
+            fs_lpf = 1 / Ts;
+
+            % Compute FFT parameters
+            freq_axis_lpf = (0:N_fft_lpf-1) * fs_lpf / N_fft_lpf;
+            half_N_lpf = floor(N_fft_lpf / 2);
+            freq_half_lpf = freq_axis_lpf(1:half_N_lpf);
+
+            % Find fundamental frequency bin
+            [~, fund_idx_lpf] = min(abs(freq_half_lpf - force_frequency));
+
+            % Create 2x3 layout (one subplot per channel)
+            tl_lpf = tiledlayout(tab_u_lpf_spectrum, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl_lpf, sprintf('u_{lpf} Spectrum (After LPF, f_{low}=%d Hz)', f_low), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            for ch = 1:6
+                ax = nexttile(tl_lpf);
+
+                % Compute FFT magnitude for u_lpf (after LPF)
+                Y_u_lpf = fft(u_lpf_steady(:, ch));
+                mag_u_lpf = abs(Y_u_lpf(1:half_N_lpf)) / N_fft_lpf * 2;
+
+                % Get fundamental amplitude (in A)
+                fund_amp_lpf = mag_u_lpf(fund_idx_lpf);
+
+                % Normalize to fundamental
+                if fund_amp_lpf > 1e-6
+                    mag_norm_lpf = mag_u_lpf / fund_amp_lpf;
+                else
+                    mag_norm_lpf = mag_u_lpf;
+                end
+
+                % Plot spectrum with channel color
+                plot(ax, freq_half_lpf, mag_norm_lpf, 'Color', colors(ch,:), 'LineWidth', 1.5);
+
+                % Add vertical line at f_low
+                hold(ax, 'on');
+                xline(ax, f_low, 'r--', 'LineWidth', 1.5);
+                hold(ax, 'off');
+
+                % Set log scale and limits
+                set(ax, 'XScale', 'log');
+                xlim(ax, [10, 20000]);
+                ylim(ax, [0, 1.1]);
+
+                % Labels
+                xlabel(ax, 'Frequency [Hz]', 'FontSize', xlabel_fontsize);
+
+                % Title with channel and fundamental amplitude
+                title(ax, sprintf('P%d (%.4f A @ %dHz)', ch, fund_amp_lpf, round(force_frequency)), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+
+            fprintf('  Tab 5.6: u_lpf Spectrum (6 channels) - After LPF\n');
+
+            % ───────────────────────────────────────────────────────────────────
+            % Tab 5.7: u vs u_lpf Spectrum Comparison
+            % Shows both spectra overlaid for direct comparison
+            % ───────────────────────────────────────────────────────────────────
+            tab_u_compare = uitab(tabgroup, 'Title', 'u vs u_lpf Compare');
+            tab_handles.u_compare = tab_u_compare;
+
+            % Use same steady-state data
+            u_steady_cmp = u_data(idx_start:end, :);
+
+            % Create 2x3 layout
+            tl_cmp = tiledlayout(tab_u_compare, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl_cmp, sprintf('u vs u_{lpf} Spectrum Comparison (f_{low} = %d Hz)', f_low), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            for ch = 1:6
+                ax = nexttile(tl_cmp);
+                hold(ax, 'on');
+
+                % Compute FFT for u (before LPF)
+                Y_u = fft(u_steady_cmp(:, ch));
+                mag_u = abs(Y_u(1:half_N_lpf)) / N_fft_lpf * 2;
+
+                % Compute FFT for u_lpf (after LPF)
+                Y_u_lpf = fft(u_lpf_steady(:, ch));
+                mag_u_lpf = abs(Y_u_lpf(1:half_N_lpf)) / N_fft_lpf * 2;
+
+                % Plot both spectra (log-log scale for better visibility)
+                plot(ax, freq_half_lpf, mag_u, 'Color', [0.6 0.6 0.6], 'LineWidth', 2.0, ...
+                    'DisplayName', 'u (Before LPF)');
+                plot(ax, freq_half_lpf, mag_u_lpf, 'Color', colors(ch,:), 'LineWidth', 2.0, ...
+                    'DisplayName', 'u_{lpf} (After LPF)');
+
+                % Add vertical line at f_low
+                xline(ax, f_low, 'r--', 'LineWidth', 1.5, 'DisplayName', sprintf('f_{low}=%dHz', f_low));
+
+                % Set log-log scale
+                set(ax, 'XScale', 'log');
+                set(ax, 'YScale', 'log');
+                xlim(ax, [10, 50000]);
+
+                % Labels
+                xlabel(ax, 'Frequency [Hz]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, 'Amplitude [A]', 'FontSize', ylabel_fontsize);
+
+                % Title with channel
+                title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+
+                % Legend only on first channel
+                if ch == 1
+                    legend(ax, 'Location', 'southwest', 'FontSize', 9);
+                end
+            end
+
+            fprintf('  Tab 5.7: u vs u_lpf Spectrum Comparison\n');
         end
 
         % ───────────────────────────────────────────────────────────────────
@@ -1695,6 +1897,27 @@ if SAVE_MAT || SAVE_PNG
                         exportgraphics(tab_u_spectrum, fullfile(test_dir, 'tab5_5_u_spectrum.png'), 'Resolution', export_resolution);
                     end
 
+                    % Tab 5.1: u_lpf (only for LPF mode)
+                    if lpf_enable && isfield(tab_handles, 'control_input_lpf')
+                        tabgroup.SelectedTab = tab_handles.control_input_lpf;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.control_input_lpf, fullfile(test_dir, 'tab5_1_u_lpf.png'), 'Resolution', export_resolution);
+                    end
+
+                    % Tab 5.6: u_lpf Spectrum (only for sine mode with LPF)
+                    if strcmpi(signal_type_original, 'sine') && lpf_enable && isfield(tab_handles, 'u_lpf_spectrum')
+                        tabgroup.SelectedTab = tab_handles.u_lpf_spectrum;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.u_lpf_spectrum, fullfile(test_dir, 'tab5_6_u_lpf_spectrum.png'), 'Resolution', export_resolution);
+                    end
+
+                    % Tab 5.7: u vs u_lpf Comparison (only for sine mode with LPF)
+                    if strcmpi(signal_type_original, 'sine') && lpf_enable && isfield(tab_handles, 'u_compare')
+                        tabgroup.SelectedTab = tab_handles.u_compare;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.u_compare, fullfile(test_dir, 'tab5_7_u_vs_u_lpf.png'), 'Resolution', export_resolution);
+                    end
+
                     % Tab 6: vd vs vm Tracking
                     tabgroup.SelectedTab = tab6;
                     drawnow; pause(0.1);
@@ -1718,6 +1941,12 @@ if SAVE_MAT || SAVE_PNG
                     tab_count = 9;
                     if strcmpi(signal_type_original, 'sine')
                         tab_count = tab_count + 1;  % u Spectrum
+                    end
+                    if lpf_enable
+                        tab_count = tab_count + 1;  % u_lpf
+                        if strcmpi(signal_type_original, 'sine')
+                            tab_count = tab_count + 2;  % u_lpf Spectrum + u vs u_lpf
+                        end
                     end
                 else
                     % Ideal Tracking mode: Tab 4 (fd vs fm)
