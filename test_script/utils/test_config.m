@@ -143,7 +143,7 @@ function config = test_config(varargin)
     % ========================================================================
     % Inner loop frequencies (all produce integer samples_per_cycle)
     config.inner_loop_frequencies = [10, 50, 100, 125, 200, 250, ...
-                                     400, 500, 625, 800, 1000, 2000, 3200,4000];
+                                     400, 500, 625, 800, 1000, 1250, 2000, 3200,4000];
 
     % Force control frequencies (limited by Nyquist of pos_update_rate)
     config.force_frequencies = [1, 10, 20, 50, 100, 125, 200, 250];

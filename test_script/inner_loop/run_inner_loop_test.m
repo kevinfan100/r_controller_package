@@ -31,7 +31,7 @@ controller_type = 'model_base_ctrl';
 ff_preview = 0;                     % Feedforward preview steps: 0 or 2 (ZPETC)
 channel = 2;                        % Excitation channel (1-6)
 amplitude = 1;                      % Amplitude [V]
-frequency = 400;                    % Sine frequency [Hz]
+frequency = 1000;                    % Sine frequency [Hz]
 phase = 0;                          % Sine phase [deg]
 step_time = 0;                      % Step time [s]
 
