@@ -1,4 +1,4 @@
-function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
+function [v_d, f_d_interp, vd_lpf_out] = inverse_model_function(f_d, pos_m_ext, params)
 % INVERSE_MODEL_FUNCTION Desired force -> Desired Hall voltage with rate transition
 %
 % Simulink-compatible inverse model with built-in rate transition.
@@ -20,10 +20,13 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
 %                .R_norm           - Normalization radius [um]
 %                .DH_hat_inv_KI    - Pre-computed D_H_hat^-1 * K_I (6x6)
 %                .LUT              - Pre-loaded LUT data (6 x 1891 x 10)
+%                .vd_lpf_enable    - (Optional) Enable external IIR LPF on vd (default: 0)
+%                .alpha_vd         - (Optional) IIR filter coefficient (default: 0.5335)
 %
 % Outputs:
 %   v_d        - Desired Hall sensor voltage (6x1) [V]
 %   f_d_interp - Interpolated desired force (3x1) [pN], for verification
+%   vd_lpf_out - LPF-filtered vd (6x1) [V], equals v_d when vd_lpf_enable=0
 %
 % Rate Transition Modes:
 %   1 (ZOH)    - Zero-order hold f_d at 1600 Hz, compute vd every step
@@ -46,6 +49,7 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
     persistent fd_prev fd_curr phase_counter initialized first_boundary
     persistent phase_accumulator  % Fractional accumulator for precise 1600 Hz boundary
     persistent pm_prev pm_curr    % For pos_m interpolation
+    persistent vd_lpf_state       % IIR LPF state for vd (6x1)
 
     if isempty(initialized)
         fd_prev = zeros(3, 1);
@@ -55,6 +59,7 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
         phase_counter = int32(0);
         phase_accumulator = 0.0;  % Accumulates fractional part
         first_boundary = true;
+        vd_lpf_state = zeros(6, 1);  % Initialize LPF state
         initialized = true;
     end
 
@@ -135,7 +140,24 @@ function [v_d, f_d_interp] = inverse_model_function(f_d, pos_m_ext, params)
     end
 
     %% Compute v_d using interpolated f_d and pos_m (every step!)
-    v_d = inverse_model_core(f_d_interp, pos_m, params);
+    v_d_raw = inverse_model_core(f_d_interp, pos_m, params);
+
+    %% Apply optional IIR LPF to vd
+    % IIR 1st-order LPF: vd_filtered[k] = (1-alpha) * vd_raw[k] + alpha * vd_filtered[k-1]
+    % alpha = exp(-2*pi*f_low_vd*Ts), where f_low_vd is cutoff frequency
+    %
+    % Output convention:
+    %   v_d        = filtered value (enters controller) when LPF enabled, raw otherwise
+    %   vd_lpf_out = always raw value (for comparison in test scripts)
+    if isfield(params, 'vd_lpf_enable') && params.vd_lpf_enable > 0.5
+        alpha_vd = params.alpha_vd;
+        vd_lpf_state = (1 - alpha_vd) * v_d_raw + alpha_vd * vd_lpf_state;
+        v_d = vd_lpf_state;      % Filtered value enters controller
+        vd_lpf_out = v_d_raw;    % Raw value for comparison
+    else
+        v_d = v_d_raw;
+        vd_lpf_out = v_d_raw;    % Same as v_d when LPF disabled
+    end
 
     %% Increment phase counter with fractional accumulator (FPGA-compatible)
     % This achieves precise 1600 Hz average by accumulating the 0.5 remainder

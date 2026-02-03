@@ -18,6 +18,8 @@ function alloc_params = force_model_allocation_params(varargin)
 %   'SampleRateMode' - 1=ZOH, 2=Linear, 3=Direct (default: 2)
 %   'PosMSource'     - 0=static (from Bus), 1=dynamic (from external) (default: 0)
 %   'PosMInterpEnable' - 0=ZOH (default), 1=Linear interpolation for pos_m
+%   'vd_lpf_enable'  - Enable external IIR LPF on vd signal (default: 0)
+%   'f_low_vd'       - Cutoff frequency for vd LPF [Hz] (default: 10000)
 %
 % Output (offline mode):
 %   alloc_params - Structure with all system parameters
@@ -43,6 +45,8 @@ function alloc_params = force_model_allocation_params(varargin)
     addParameter(p, 'SampleRateMode', 2, @(x) ismember(x, [1, 2, 3]));
     addParameter(p, 'PosMSource', 0, @(x) ismember(x, [0, 1]));
     addParameter(p, 'PosMInterpEnable', 0, @(x) ismember(x, [0, 1]));
+    addParameter(p, 'vd_lpf_enable', 0, @(x) ismember(x, [0, 1]));
+    addParameter(p, 'f_low_vd', 10000, @(x) isnumeric(x) && x > 0);
     parse(p, varargin{:});
 
     use_simulink = p.Results.Simulink;
@@ -99,6 +103,14 @@ function alloc_params = force_model_allocation_params(varargin)
         params.sample_rate_mode = p.Results.SampleRateMode;
         params.pos_m_source = p.Results.PosMSource;
         params.pos_m_interp_enable = p.Results.PosMInterpEnable;
+
+        % VD LPF Configuration (optional external IIR filter on vd signal)
+        % IIR 1st-order LPF: H(z) = (1-alpha) / (1 - alpha*z^-1)
+        % alpha = exp(-2*pi*f_low_vd*Ts), Ts = 1e-5 (100 kHz)
+        params.vd_lpf_enable = p.Results.vd_lpf_enable;
+        params.f_low_vd = p.Results.f_low_vd;
+        Ts = 1e-5;  % 100 kHz sampling
+        params.alpha_vd = exp(-2*pi*p.Results.f_low_vd * Ts);
 
         % Pre-load LUT for Simulink (avoid dlmread in real-time)
         params.LUT = load_lut_array(params.lut_path);
@@ -250,6 +262,27 @@ function alloc_params = create_alloc_params_bus(params)
     elem.Dimensions = 1;
     elems = [elems; elem];
 
+    % VD LPF enable - Simulink specific (0=disabled, 1=enabled)
+    elem = Simulink.BusElement;
+    elem.Name = 'vd_lpf_enable';
+    elem.DataType = 'double';
+    elem.Dimensions = 1;
+    elems = [elems; elem];
+
+    % VD LPF cutoff frequency [Hz]
+    elem = Simulink.BusElement;
+    elem.Name = 'f_low_vd';
+    elem.DataType = 'double';
+    elem.Dimensions = 1;
+    elems = [elems; elem];
+
+    % VD LPF alpha coefficient
+    elem = Simulink.BusElement;
+    elem.Name = 'alpha_vd';
+    elem.DataType = 'double';
+    elem.Dimensions = 1;
+    elems = [elems; elem];
+
     % LUT (6 x 1891 x 10) - Simulink specific
     elem = Simulink.BusElement;
     elem.Name = 'LUT';
@@ -278,6 +311,9 @@ function alloc_params = create_alloc_params_bus(params)
     param_struct.sample_rate_mode = params.sample_rate_mode;
     param_struct.pos_m_source = params.pos_m_source;
     param_struct.pos_m_interp_enable = params.pos_m_interp_enable;
+    param_struct.vd_lpf_enable = params.vd_lpf_enable;
+    param_struct.f_low_vd = params.f_low_vd;
+    param_struct.alpha_vd = params.alpha_vd;
     param_struct.LUT = params.LUT;
 
     alloc_params = Simulink.Parameter(param_struct);
