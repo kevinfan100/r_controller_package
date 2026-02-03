@@ -8,10 +8,11 @@ test_script/slprj/
 # Windows reserved names
 nul
 
-# Test results data (keep folder structure)
+# Test results data (keep folder structure, ignore all generated files)
 test_results/**/*.mat
 test_results/**/*.fig
 test_results/**/*.png
+test_results/**/*.md
 
 # MATLAB temp files
 *.asv
