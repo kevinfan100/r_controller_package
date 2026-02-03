@@ -70,9 +70,28 @@ ff_preview = 0;                         % Preview steps: 0 or 2
 % f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
 %   Typical values: 5000, 10000, 20000 Hz
 %
-lpf_enable = true;                       % Enable LPF mode (3rd-order controller)
-f_low = 10000;                          % Default: 10 kHz
-hidden_lpf = false;                    % Experiment C: Hidden LPF (force u_lpf_enable=1 even when lpf_enable=false)
+lpf_enable = false;                       % Case C: 3rd-order controller (PDF design)
+f_low = 10000;                         % LPF cutoff: 10 kHz
+hidden_lpf = true;                    % Normal linking
+
+% ─────────────────────────────────────────────────────────────────────────
+% 1.2.3 VD LPF Configuration (External IIR filter on vd signal)
+% ─────────────────────────────────────────────────────────────────────────
+% vd_lpf_enable: Enable external 1st-order IIR LPF on vd signal
+%   false = vd passes through without filtering (default)
+%   true  = vd is filtered by IIR LPF before entering controller
+%
+% f_low_vd: VD LPF cutoff frequency [Hz]
+%   Typical values: 5000, 10000, 20000 Hz
+%
+% Note: This is independent of lpf_enable (3rd-order controller mode).
+%       vd_lpf filters the inverse model output, lpf_enable affects controller structure.
+%
+% IMPORTANT: vd_lpf and lpf_enable should be used mutually exclusively.
+%            Using both simultaneously may cause unexpected behavior.
+%
+vd_lpf_enable = false;                  % Default: disabled
+f_low_vd = 1000;                       % VD LPF cutoff frequency [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -229,7 +248,8 @@ else
 end
 
 alloc_params_sim = force_model_allocation_params('Simulink', true, ...
-    'pos_m', bead_position, 'SampleRateMode', sample_rate_mode);
+    'pos_m', bead_position, 'SampleRateMode', sample_rate_mode, ...
+    'vd_lpf_enable', vd_lpf_enable, 'f_low_vd', f_low_vd);
 
 % For offline analysis (not used by Simulink, but kept for compatibility)
 inv_params = force_model_allocation_params();
@@ -269,6 +289,12 @@ end
 if ControllerType == 1
     fprintf('  Model Based Control: fB_f=%d, fB_c=%d, fB_e=%d Hz\n', fB_f, fB_c, fB_e);
     fprintf('  Feedforward: ff_enable=%d, ff_preview=%d\n', ff_enable, ff_preview);
+    if lpf_enable
+        fprintf('  LPF Mode: lpf_enable=%d, f_low=%d Hz (3rd-order controller)\n', lpf_enable, f_low);
+    end
+    if vd_lpf_enable
+        fprintf('  VD LPF: vd_lpf_enable=%d, f_low_vd=%d Hz (external IIR filter)\n', vd_lpf_enable, f_low_vd);
+    end
 else
     fprintf('  PI-Controller: Kp=%.1f, Ki=%.1f (zc=%d)\n', Kp_value, Ki_value, zc);
 end
@@ -485,6 +511,35 @@ if USE_SIMULINK
         vd = vd_sim;
     end
     fprintf('  vd range: [%.4f, %.4f] V\n', min(vd(:)), max(vd(:)));
+
+    % ─────────────────────────────────────────────────────────────────────
+    % Vd_filtered: LPF-filtered vd from Simulink (when vd_lpf_enable=true)
+    % ─────────────────────────────────────────────────────────────────────
+    has_vd_filtered = false;
+    if vd_lpf_enable
+        Vd_filtered_ts = simOut.get('Vd_filtered');
+        if ~isempty(Vd_filtered_ts)
+            if isa(Vd_filtered_ts, 'timeseries')
+                vd_filtered_sim = Vd_filtered_ts.Data;
+            else
+                vd_filtered_sim = Vd_filtered_ts;
+            end
+            if N_vm ~= N
+                vd_filtered = zeros(N, 6);
+                for ch = 1:6
+                    vd_filtered(:, ch) = interp1(t_vm, vd_filtered_sim(:, ch), t, 'linear', 'extrap');
+                end
+            else
+                vd_filtered = vd_filtered_sim;
+            end
+            fprintf('  vd_filtered range: [%.4f, %.4f] V (LPF @ %d Hz)\n', ...
+                min(vd_filtered(:)), max(vd_filtered(:)), f_low_vd);
+            has_vd_filtered = true;
+        else
+            fprintf('  Warning: Vd_filtered not available from Simulink.\n');
+            fprintf('  Please update main_system.slx to output vd_lpf_out.\n');
+        end
+    end
 
     % ─────────────────────────────────────────────────────────────────────
     % f_d_interp: interpolated desired force from Simulink inverse_model_function
@@ -1581,6 +1636,130 @@ if ENABLE_PLOT
         end
 
         % ───────────────────────────────────────────────────────────────────
+        % Tab 5.8: VD LPF Comparison (only when vd_lpf_enable=true)
+        %          Top: vd vs vd_filtered time domain
+        %          Bottom: vd - vd_filtered difference
+        % ───────────────────────────────────────────────────────────────────
+        if vd_lpf_enable && has_vd_filtered
+            tab_vd_lpf = uitab(tabgroup, 'Title', 'VD LPF');
+            tab_handles.vd_lpf_comparison = tab_vd_lpf;
+
+            tl_vd_lpf = tiledlayout(tab_vd_lpf, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl_vd_lpf, sprintf('VD LPF Comparison (f_{low,vd} = %d Hz, \\alpha = %.4f)', ...
+                f_low_vd, exp(-2*pi*f_low_vd*Ts)), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            % Calculate vd (filtered) vs vd_filtered (raw) difference
+            % Note: vd = filtered value, vd_filtered = raw value (for comparison)
+            % diff = raw - filtered = high-frequency content removed by LPF
+            vd_lpf_diff = vd_filtered - vd;
+            vd_lpf_diff_rms = rms(vd_lpf_diff(idx_start:end, :));
+            vd_lpf_diff_max = max(abs(vd_lpf_diff(idx_start:end, :)));
+
+            % Top row: vd (filtered) vs vd_filtered (raw) for first 3 channels
+            for ch = 1:3
+                ax = nexttile(tl_vd_lpf, ch);
+                hold(ax, 'on');
+
+                plot(ax, t(idx_display:end)*1000, vd_filtered(idx_display:end, ch), 'b-', ...
+                    'LineWidth', 1.5, 'DisplayName', 'v_d (raw)');
+                plot(ax, t(idx_display:end)*1000, vd(idx_display:end, ch), 'r--', ...
+                    'LineWidth', 2.0, 'DisplayName', 'v_d (LPF)');
+
+                xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, 'Voltage [V]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('P%d: diff RMS=%.4f V, Max=%.4f V', ch, ...
+                    vd_lpf_diff_rms(ch), vd_lpf_diff_max(ch)), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+                legend(ax, 'Location', 'best', 'FontSize', legend_fontsize-1);
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+
+            % Bottom row: Difference (raw - filtered) = removed high-freq content
+            for ch = 1:3
+                ax = nexttile(tl_vd_lpf, ch + 3);
+                hold(ax, 'on');
+
+                plot(ax, t(idx_start:end)*1000, vd_lpf_diff(idx_start:end, ch), ...
+                    'Color', colors(ch,:), 'LineWidth', measurement_linewidth);
+                yline(ax, 0, 'k--', 'LineWidth', 0.5);
+                yline(ax, vd_lpf_diff_rms(ch), 'r--', 'LineWidth', 1.0);
+                yline(ax, -vd_lpf_diff_rms(ch), 'r--', 'LineWidth', 1.0);
+
+                xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, '\Delta v_d [V]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('P%d: Removed by LPF (raw - filtered)', ch), ...
+                    'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+
+            fprintf('  Tab 5.8: VD LPF Comparison (f_low_vd=%d Hz)\n', f_low_vd);
+        end
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 5.9: VD LPF Spectrum (only when vd_lpf_enable=true and sine mode)
+        %          Compare vd vs vd_filtered in frequency domain
+        % ───────────────────────────────────────────────────────────────────
+        if vd_lpf_enable && has_vd_filtered && strcmpi(signal_type_original, 'sine')
+            tab_vd_lpf_spec = uitab(tabgroup, 'Title', 'VD LPF Spectrum');
+            tab_handles.vd_lpf_spectrum = tab_vd_lpf_spec;
+
+            tl_vd_lpf_spec = tiledlayout(tab_vd_lpf_spec, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl_vd_lpf_spec, sprintf('VD LPF Spectrum Comparison (f_{low,vd} = %d Hz)', f_low_vd), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            fs = 1 / Ts;  % 100 kHz
+            N_fft = 2^nextpow2(length(t(idx_start:end)));
+            f_axis = (0:N_fft/2-1) * fs / N_fft;
+            f_max_plot = min(50000, fs/2);  % Plot up to 50 kHz or Nyquist
+
+            for ch = 1:6
+                if ch <= 3
+                    ax = nexttile(tl_vd_lpf_spec, ch);
+                else
+                    ax = nexttile(tl_vd_lpf_spec, ch);
+                end
+                hold(ax, 'on');
+
+                % FFT of vd (filtered, enters controller)
+                vd_fft = fft(vd(idx_start:end, ch), N_fft);
+                vd_mag = abs(vd_fft(1:N_fft/2)) / (N_fft/2);
+                vd_mag_dB = 20*log10(vd_mag + 1e-12);
+
+                % FFT of vd_filtered (raw, before LPF)
+                vd_filt_fft = fft(vd_filtered(idx_start:end, ch), N_fft);
+                vd_filt_mag = abs(vd_filt_fft(1:N_fft/2)) / (N_fft/2);
+                vd_filt_mag_dB = 20*log10(vd_filt_mag + 1e-12);
+
+                plot(ax, f_axis/1000, vd_filt_mag_dB, 'b-', 'LineWidth', 1.5, 'DisplayName', 'v_d (raw)');
+                plot(ax, f_axis/1000, vd_mag_dB, 'r-', 'LineWidth', 1.5, 'DisplayName', 'v_d (LPF)');
+
+                % Mark cutoff frequency
+                xline(ax, f_low_vd/1000, 'k--', 'LineWidth', 1.5, 'DisplayName', 'f_{cutoff}');
+
+                xlim(ax, [0, f_max_plot/1000]);
+                xlabel(ax, 'Frequency [kHz]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, 'Magnitude [dB]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('P%d Spectrum', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+                if ch == 1
+                    legend(ax, 'Location', 'northeast', 'FontSize', legend_fontsize-2);
+                end
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+
+            fprintf('  Tab 5.9: VD LPF Spectrum\n');
+        end
+
+        % ───────────────────────────────────────────────────────────────────
         % Tab 6: Vm vs Vd Tracking (Lissajous-style plot)
         %        X: Vd, Y: Vm, 6 channels overlaid, 3 cycles
         %        Style: matching reference (analyze_invmodel_test.m Tab 8)
@@ -2065,6 +2244,20 @@ if SAVE_MAT || SAVE_PNG
                         tabgroup.SelectedTab = tab_handles.u_compare;
                         drawnow; pause(0.1);
                         exportgraphics(tab_handles.u_compare, fullfile(test_dir, 'tab5_7_u_vs_u_lpf.png'), 'Resolution', export_resolution);
+                    end
+
+                    % Tab 5.8: VD LPF Comparison (only when vd_lpf_enable=true)
+                    if vd_lpf_enable && isfield(tab_handles, 'vd_lpf_comparison')
+                        tabgroup.SelectedTab = tab_handles.vd_lpf_comparison;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.vd_lpf_comparison, fullfile(test_dir, 'tab5_8_vd_lpf_comparison.png'), 'Resolution', export_resolution);
+                    end
+
+                    % Tab 5.9: VD LPF Spectrum (only when vd_lpf_enable=true and sine mode)
+                    if vd_lpf_enable && strcmpi(signal_type_original, 'sine') && isfield(tab_handles, 'vd_lpf_spectrum')
+                        tabgroup.SelectedTab = tab_handles.vd_lpf_spectrum;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.vd_lpf_spectrum, fullfile(test_dir, 'tab5_9_vd_lpf_spectrum.png'), 'Resolution', export_resolution);
                     end
 
                     % Tab 6: vd vs vm Tracking

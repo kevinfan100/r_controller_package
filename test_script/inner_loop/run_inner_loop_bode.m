@@ -66,7 +66,7 @@ ff_enable = true;    % Enable feedforward filter (only for Model Based Control)
 % f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
 %   Typical values: 5000, 10000, 20000 Hz
 %
-lpf_enable = true;                 % Default: disabled for backward compatibility
+lpf_enable = false;                 % Default: disabled for backward compatibility
 f_low = 10000;                      % Default: 10 kHz
 
 % -------------------------------------------------------------------------
