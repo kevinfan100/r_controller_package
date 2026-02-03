@@ -70,8 +70,9 @@ ff_preview = 0;                         % Preview steps: 0 or 2
 % f_low: LPF cutoff frequency [Hz] (only used when lpf_enable=true)
 %   Typical values: 5000, 10000, 20000 Hz
 %
-lpf_enable = true;                      % Enable LPF mode (3rd-order controller)
+lpf_enable = true;                       % Enable LPF mode (3rd-order controller)
 f_low = 10000;                          % Default: 10 kHz
+hidden_lpf = false;                    % Experiment C: Hidden LPF (force u_lpf_enable=1 even when lpf_enable=false)
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.3 Desired Force Signal (f_d)
@@ -84,7 +85,7 @@ force_amplitude = 5.0;          % Force amplitude [pN]
 force_offset    = 0;
 
 % Sine mode parameters
-force_frequency = 50;           % Force frequency [Hz]
+force_frequency = 100;          % Force frequency [Hz]
 force_phase = 0;                % Phase [deg]
 
 % Step mode parameters
@@ -124,8 +125,8 @@ USE_REALTIME_INTERP = true;     % true = Real-time (1-period delay), false = Ide
 % ─────────────────────────────────────────────────────────────────────────
 % Note: When lpf_enable=true, use conservative bandwidths (fB_c=500, fB_e=2500)
 fB_f = 1000;                    % Feedforward bandwidth [Hz]
-fB_c = 2500;                     % Controller bandwidth [Hz]
-fB_e = 12500;                    % Estimator bandwidth [Hz]
+fB_c = 2500;                    % Controller bandwidth [Hz]
+fB_e = 12500;                   % Estimator bandwidth [Hz]
 
 % ─────────────────────────────────────────────────────────────────────────
 % 1.7 PI Controller Parameters
@@ -176,7 +177,12 @@ K_A_DIAG = [0.3618, 0.3614, 0.3536, 0.3532, 0.3573, 0.3610];
 % f_low: LPF cutoff frequency [Hz] (shared with controller)
 %   Transfer function: H(s) = w_low / (s + w_low), where w_low = 2*pi*f_low
 %
-u_lpf_enable = double(lpf_enable);  % Link to controller lpf_enable
+% Normal linking (unless hidden_lpf is enabled)
+if exist('hidden_lpf', 'var') && hidden_lpf
+    u_lpf_enable = 1;  % Force enable Simulink LPF even when lpf_enable=false
+else
+    u_lpf_enable = double(lpf_enable);
+end
 % f_low is already set in LPF Configuration section (1.2.2)
 
 
@@ -395,11 +401,29 @@ if USE_SIMULINK
 
     % Set simulation parameters
     set_param(model_name, 'StopTime', num2str(sim_time));
+    set_param(model_name, 'Solver', 'ode45');
+    set_param(model_name, 'MaxStep', num2str(Ts/10));  % 1µs max step
+
+    % High-resolution output for LPF visualization (only when lpf_enable)
+    if lpf_enable
+        Ts_hires = 1e-6;  % 1MHz output
+        t_output_hires = (0:Ts_hires:sim_time)';
+        fprintf('  Solver: ode45, MaxStep: %.2e s, Output: %.0f kHz\n', Ts/10, 1/Ts_hires/1000);
+    else
+        t_output_hires = [];
+        fprintf('  Solver: ode45, MaxStep: %.2e s\n', Ts/10);
+    end
 
     % Run simulation
     fprintf('  Running Simulink... ');
     tic;
-    simOut = sim(model_name);
+    if lpf_enable && ~isempty(t_output_hires)
+        % Assign output times to base workspace for Simulink access
+        assignin('base', 't_output_hires', t_output_hires);
+        simOut = sim(model_name, 'OutputTimes', 't_output_hires', 'OutputOption', 'SpecifiedOutputTimes');
+    else
+        simOut = sim(model_name);
+    end
     fprintf('Done (%.2f sec)\n', toc);
 
     % ─────────────────────────────────────────────────────────────────────
@@ -1177,6 +1201,70 @@ if ENABLE_PLOT
 
             % Convert to current
             u_lpf_data = u_lpf_voltage .* K_A_DIAG;  % Now in Amperes
+
+            % Store high-resolution data for ZOH vs LPF visualization
+            % Use analytical solution to compute true 1MHz u_lpf response
+            if lpf_enable && ~isempty(t_output_hires)
+                % u is at 100kHz - this is the ZOH input to the LPF
+                if isa(u_ts, 'timeseries')
+                    u_100k_raw = u_ts.Data;
+                    t_100k = u_ts.Time;
+                else
+                    u_100k_raw = u_ts;
+                    t_100k = t_u;
+                end
+                % Ensure 6 columns
+                if size(u_100k_raw, 2) < 6
+                    u_100k_padded = zeros(size(u_100k_raw, 1), 6);
+                    u_100k_padded(:, 1:size(u_100k_raw, 2)) = u_100k_raw;
+                    u_100k_raw = u_100k_padded;
+                end
+                u_100k = u_100k_raw .* K_A_DIAG;  % u in Amperes at 100kHz
+                t_u_hires = t_100k;  % For stairs() plotting
+                u_hires = u_100k;    % For stairs() plotting
+
+                % Analytically compute u_lpf at 1MHz using 1st-order LPF response
+                % For ZOH input over [t_k, t_{k+1}]:
+                % y(t) = y_k * exp(-w*(t-t_k)) + u_k * (1 - exp(-w*(t-t_k)))
+                Ts_100k = t_100k(2) - t_100k(1);
+                Ts_1MHz = 1e-6;  % 1MHz = 1µs
+                upsample_ratio = round(Ts_100k / Ts_1MHz);  % Should be 10
+
+                N_100k = length(t_100k);
+                N_1MHz = (N_100k - 1) * upsample_ratio + 1;
+                t_hires = (0:N_1MHz-1)' * Ts_1MHz;
+                u_lpf_hires = zeros(N_1MHz, 6);
+
+                % Initial condition from Simulink u_lpf (first sample)
+                y_prev = u_lpf_raw(1, :) .* K_A_DIAG;
+
+                fprintf('  Computing analytical 1MHz LPF response...');
+                tic;
+                for k = 1:N_100k-1
+                    % Current ZOH input value
+                    u_k = u_100k(k, :);
+
+                    % Compute response at each 1MHz point within this 100kHz interval
+                    for m = 0:upsample_ratio-1
+                        idx_1MHz = (k-1) * upsample_ratio + m + 1;
+                        dt = m * Ts_1MHz;
+                        exp_term = exp(-w_low * dt);
+                        u_lpf_hires(idx_1MHz, :) = y_prev .* exp_term + u_k .* (1 - exp_term);
+                    end
+
+                    % Update y_prev for next interval (value at end of this interval)
+                    exp_full = exp(-w_low * Ts_100k);
+                    y_prev = y_prev .* exp_full + u_k .* (1 - exp_full);
+                end
+                % Last point
+                u_lpf_hires(end, :) = y_prev;
+                fprintf(' Done (%.2f sec)\n', toc);
+
+                fprintf('  High-resolution u_lpf: 1000 kHz (analytical), u: 100 kHz (ZOH)\n');
+                has_hires_data = true;
+            else
+                has_hires_data = false;
+            end
         end
 
         tl5 = tiledlayout(tab5, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
@@ -1235,6 +1323,60 @@ if ENABLE_PLOT
                 box(ax, 'on');
             end
             fprintf('  Tab 5.1: Control Input (u_lpf) - After LPF [A]\n');
+        end
+
+        % ───────────────────────────────────────────────────────────────────
+        % Tab 5.2: u vs u_lpf (ZOH Effect) - High Resolution
+        % Shows ZOH staircase (u @ 100kHz) vs smooth LPF output (u_lpf @ 1MHz)
+        % Only available when lpf_enable and high-resolution data exists
+        % ───────────────────────────────────────────────────────────────────
+        if lpf_enable && exist('has_hires_data', 'var') && has_hires_data
+            tab5_2 = uitab(tabgroup, 'Title', 'u vs u_lpf (ZOH)');
+            tab_handles.u_vs_u_lpf_zoh = tab5_2;
+
+            % Show ~0.5ms window (50 samples at 100kHz) to see ZOH steps clearly
+            % Start from a point with significant signal amplitude
+            t_display_start = t(idx_display);
+            t_window_ms = 0.5;  % 0.5 ms window to see ~50 ZOH steps
+            t_display_end = t_display_start + t_window_ms / 1000;
+
+            % Find indices for u_lpf
+            idx_hires_start = find(t_hires >= t_display_start, 1, 'first');
+            idx_hires_end = find(t_hires <= t_display_end, 1, 'last');
+
+            % Find indices for u at its native rate
+            idx_u_start = find(t_u_hires >= t_display_start, 1, 'first');
+            idx_u_end = find(t_u_hires <= t_display_end, 1, 'last');
+
+            tl5_2 = tiledlayout(tab5_2, 2, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
+            title(tl5_2, sprintf('DAC Output (ZOH 100kHz) vs LPF Output (f_{low}=%d Hz) - %.1f ms window', f_low, t_window_ms), ...
+                'FontWeight', 'bold', 'FontSize', title_fontsize);
+
+            for ch = 1:6
+                ax = nexttile(tl5_2);
+                hold(ax, 'on');
+
+                % u: staircase (gray) - ZOH effect at 100kHz
+                stairs(ax, t_u_hires(idx_u_start:idx_u_end)*1000, ...
+                    u_hires(idx_u_start:idx_u_end, ch), ...
+                    'Color', [0.5 0.5 0.5], 'LineWidth', 2.0, 'DisplayName', 'u (ZOH)');
+
+                % u_lpf: smooth curve (green)
+                plot(ax, t_hires(idx_hires_start:idx_hires_end)*1000, ...
+                    u_lpf_hires(idx_hires_start:idx_hires_end, ch), ...
+                    'Color', [0.466 0.674 0.188], 'LineWidth', 2.5, 'DisplayName', 'u_{lpf}');
+
+                hold(ax, 'off');
+                legend(ax, 'Location', 'best', 'FontSize', legend_fontsize-2);
+                xlabel(ax, 'Time [ms]', 'FontSize', xlabel_fontsize);
+                ylabel(ax, 'Current [A]', 'FontSize', ylabel_fontsize);
+                title(ax, sprintf('P%d', ch), 'FontSize', title_fontsize-2, 'FontWeight', 'bold');
+                ax.FontSize = tick_fontsize;
+                ax.LineWidth = axis_linewidth;
+                grid(ax, 'on');
+                box(ax, 'on');
+            end
+            fprintf('  Tab 5.2: u vs u_lpf (ZOH Effect) - %.1f ms window\n', t_window_ms);
         end
 
         % ───────────────────────────────────────────────────────────────────
@@ -1904,6 +2046,13 @@ if SAVE_MAT || SAVE_PNG
                         exportgraphics(tab_handles.control_input_lpf, fullfile(test_dir, 'tab5_1_u_lpf.png'), 'Resolution', export_resolution);
                     end
 
+                    % Tab 5.2: u vs u_lpf (ZOH Effect) - High Resolution
+                    if lpf_enable && isfield(tab_handles, 'u_vs_u_lpf_zoh')
+                        tabgroup.SelectedTab = tab_handles.u_vs_u_lpf_zoh;
+                        drawnow; pause(0.1);
+                        exportgraphics(tab_handles.u_vs_u_lpf_zoh, fullfile(test_dir, 'tab5_2_u_vs_u_lpf_zoh.png'), 'Resolution', export_resolution);
+                    end
+
                     % Tab 5.6: u_lpf Spectrum (only for sine mode with LPF)
                     if strcmpi(signal_type_original, 'sine') && lpf_enable && isfield(tab_handles, 'u_lpf_spectrum')
                         tabgroup.SelectedTab = tab_handles.u_lpf_spectrum;
@@ -1943,7 +2092,10 @@ if SAVE_MAT || SAVE_PNG
                         tab_count = tab_count + 1;  % u Spectrum
                     end
                     if lpf_enable
-                        tab_count = tab_count + 1;  % u_lpf
+                        tab_count = tab_count + 1;  % u_lpf (Tab 5.1)
+                        if isfield(tab_handles, 'u_vs_u_lpf_zoh')
+                            tab_count = tab_count + 1;  % u vs u_lpf ZOH (Tab 5.2)
+                        end
                         if strcmpi(signal_type_original, 'sine')
                             tab_count = tab_count + 2;  % u_lpf Spectrum + u vs u_lpf
                         end
@@ -2007,6 +2159,15 @@ if SAVE_MAT || SAVE_PNG
             results.data.f_d_interp = f_d_interp;  % Interpolated f_d from Simulink
             results.analysis.voltage_error_rms = voltage_error_rms;
             results.analysis.voltage_error_max = voltage_error_max;
+
+            % Save u_lpf when LPF mode is enabled
+            if lpf_enable && exist('u_lpf_data', 'var')
+                results.data.u_lpf = u_lpf_data;
+                results.config.lpf_enable = lpf_enable;
+                results.config.f_low = f_low;
+            else
+                results.config.lpf_enable = false;
+            end
         end
 
         results.params = inv_params;
